@@ -1,0 +1,15 @@
+src/
+tests/
+testing/
+docs/
+scripts/dev-*
+.local-secrets/
+.agentswallets/
+*.sqlite
+*.sqlite-journal
+.master_password
+coverage/
+tsconfig.json
+vitest.config.ts
+.DS_Store
+*.log

@@ -1,0 +1,64 @@
+{
+  "name": "agentswallets",
+  "version": "0.1.0",
+  "description": "Secure local wallet CLI for AI agents on Polygon",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "agentswallets": "dist/index.js",
+    "aw": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "scripts/postinstall.mjs",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "start": "node dist/index.js",
+    "postinstall": "node scripts/postinstall.mjs",
+    "prepack": "npm run build",
+    "pack:check": "npm pack --dry-run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentswallets/cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/agentswallets/cli/issues"
+  },
+  "homepage": "https://agentswallets.com",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "cli",
+    "wallet",
+    "polygon",
+    "polymarket",
+    "agents"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "cfonts": "^3.3.1",
+    "commander": "^14.0.3",
+    "ethers": "^6.16.0",
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
