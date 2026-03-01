@@ -21,6 +21,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: npm ci
@@ -30,6 +31,22 @@ jobs:
 
       - name: Run tests
         run: npx vitest run
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish unscoped package (agentswallets)
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish scoped package (@agentswallets/cli)
+        run: |
+          npm pkg set name='@agentswallets/cli'
+          npm publish --access public
+          npm pkg set name='agentswallets'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Generate changelog
         id: changelog
