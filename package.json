@@ -1,6 +1,6 @@
 {
   "name": "agentswallets",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Secure local wallet CLI for AI agents on Polygon",
   "type": "module",
   "main": "dist/index.js",
