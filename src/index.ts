@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 import { Command, CommanderError } from 'commander';
 import { AppError } from './core/errors.js';
 import { exitCodeForError } from './core/errors.js';
@@ -7,6 +8,7 @@ import { CLI_VERSION } from './core/version.js';
 import { destroyProviders } from './core/rpc.js';
 import { redactSecrets } from './util/redact.js';
 import { buildCli, commandSchema } from './cli.js';
+import { getDbPath } from './core/config.js';
 
 // Safety net: redact any sensitive data from unhandled rejections before they hit stderr.
 process.on('unhandledRejection', (reason) => {
@@ -65,6 +67,42 @@ function findTargetCommand(root: Command, argv: string[]): Command {
 }
 
 const cli = buildCli();
+
+// Bare `aw` (no subcommand) → show welcome or help instead of an error.
+const bareArgs = process.argv.slice(2).filter(a => !a.startsWith('-'));
+if (bareArgs.length === 0 && !process.argv.includes('--help') && !process.argv.includes('-h')) {
+  const initialized = fs.existsSync(getDbPath());
+  if (isJsonMode) {
+    if (!initialized) {
+      process.stdout.write(JSON.stringify(jsonOk({
+        version: CLI_VERSION,
+        initialized: false,
+        message: 'Welcome to AgentsWallets. Run `aw init --json` to get started.',
+        next_step: 'aw init --json'
+      })) + '\n');
+    } else {
+      process.stdout.write(JSON.stringify(jsonOk(commandSchema(cli))) + '\n');
+    }
+  } else {
+    if (!initialized) {
+      process.stdout.write([
+        '',
+        `  AgentsWallets v${CLI_VERSION}`,
+        '  Wallets for AI Agents \u00b7 Polygon',
+        '',
+        '  Get started:',
+        '    aw init              Set up master password',
+        '    aw --help            Show all commands',
+        '',
+        '  https://github.com/agentswallets/cli',
+        '',
+      ].join('\n') + '\n');
+    } else {
+      cli.outputHelp();
+    }
+  }
+  process.exit(0);
+}
 
 cli.parseAsync(process.argv)
   .then(() => {
