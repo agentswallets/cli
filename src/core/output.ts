@@ -18,47 +18,6 @@ function buildMeta(requestId?: string, extraMeta?: Record<string, unknown>): Jso
   };
 }
 
-type PublicErrorCode =
-  | 'INSUFFICIENT_BALANCE'
-  | 'WALLET_NOT_FOUND'
-  | 'MARKET_NOT_FOUND'
-  | 'INVALID_AMOUNT'
-  | 'DAILY_LIMIT_EXCEEDED'
-  | 'PER_TX_LIMIT_EXCEEDED'
-  | 'TX_COUNT_LIMIT_EXCEEDED'
-  | 'INVALID_PARAMS'
-  | 'NOT_INITIALIZED'
-  | 'UNAUTHORIZED'
-  | 'AUTH_FAILED'
-  | 'NETWORK_ERROR'
-  | 'INTERNAL_ERROR';
-
-function toPublicErrorCode(code: string): PublicErrorCode {
-  const map: Record<string, PublicErrorCode> = {
-    ERR_INSUFFICIENT_FUNDS: 'INSUFFICIENT_BALANCE',
-    ERR_INVALID_PARAMS: 'INVALID_PARAMS',
-    ERR_WALLET_NOT_FOUND: 'WALLET_NOT_FOUND',
-    ERR_MARKET_NOT_FOUND: 'MARKET_NOT_FOUND',
-    ERR_INVALID_AMOUNT: 'INVALID_AMOUNT',
-    ERR_NEED_UNLOCK: 'UNAUTHORIZED',
-    ERR_RPC_UNAVAILABLE: 'NETWORK_ERROR',
-    ERR_POLYMARKET_CLI_NOT_FOUND: 'NETWORK_ERROR',
-    ERR_POLYMARKET_FAILED: 'NETWORK_ERROR',
-    ERR_POLYMARKET_TIMEOUT: 'NETWORK_ERROR',
-    ERR_POLYMARKET_AUTH: 'UNAUTHORIZED',
-    ERR_AUTH_FAILED: 'AUTH_FAILED',
-    ERR_INTERNAL: 'INTERNAL_ERROR',
-    ERR_TX_FAILED: 'INTERNAL_ERROR',
-    ERR_NOT_INITIALIZED: 'NOT_INITIALIZED',
-    ERR_TX_COUNT_LIMIT_EXCEEDED: 'TX_COUNT_LIMIT_EXCEEDED',
-    ERR_PER_TX_LIMIT_EXCEEDED: 'PER_TX_LIMIT_EXCEEDED',
-    ERR_APPROVAL_THRESHOLD_EXCEEDED: 'PER_TX_LIMIT_EXCEEDED',
-    ERR_DAILY_LIMIT_EXCEEDED: 'DAILY_LIMIT_EXCEEDED',
-    ERR_TOKEN_NOT_ALLOWED: 'INVALID_PARAMS',
-    ERR_ADDRESS_NOT_ALLOWED: 'INVALID_PARAMS'
-  };
-  return map[code] || 'INTERNAL_ERROR';
-}
 
 export function jsonOk<T>(
   data: T,
@@ -97,14 +56,14 @@ export function jsonError(
 ): {
   ok: false;
   data: null;
-  error: { code: PublicErrorCode; message: string; details: Record<string, unknown>; recovery_hint?: string };
+  error: { code: AppErrorCode; message: string; details: Record<string, unknown>; recovery_hint?: string };
   meta: JsonMeta;
 } {
   return {
     ok: false,
     data: null,
     error: {
-      code: toPublicErrorCode(code),
+      code,
       message: redactSecrets(message),
       details: details ? redactDetails(details) : {},
       recovery_hint: recoveryHintForCode(code)

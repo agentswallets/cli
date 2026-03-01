@@ -37,7 +37,7 @@ describe('runCommand runtime behavior', () => {
     expect(errorCalls).toHaveLength(1);
     const parsed = JSON.parse(String(errorCalls[0]?.[0]));
     expect(parsed.ok).toBe(false);
-    expect(parsed.error.code).toBe('INTERNAL_ERROR');
+    expect(parsed.error.code).toBe('ERR_INTERNAL');
     expect(process.exitCode).toBe(2);
   });
 });

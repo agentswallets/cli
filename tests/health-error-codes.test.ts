@@ -50,10 +50,10 @@ describe('health handler error classification', () => {
     const errOutput = stdoutSpy.mock.calls.map((c) => String(c[0])).filter(s => { try { return JSON.parse(s).ok === false; } catch { return false; } }).join('');
     const parsed = JSON.parse(errOutput.trim());
     expect(parsed.ok).toBe(false);
-    expect(parsed.error.code).toBe('NOT_INITIALIZED');
+    expect(parsed.error.code).toBe('ERR_NOT_INITIALIZED');
   });
 
-  it('throws NETWORK_ERROR when RPC fails', async () => {
+  it('throws ERR_RPC_UNAVAILABLE when RPC fails', async () => {
     vi.doMock('../src/core/db.js', () => ({
       getDb: () => ({}),
       ensureDataDir: () => {},
@@ -81,7 +81,7 @@ describe('health handler error classification', () => {
     const errOutput = stdoutSpy.mock.calls.map((c) => String(c[0])).filter(s => { try { return JSON.parse(s).ok === false; } catch { return false; } }).join('');
     const parsed = JSON.parse(errOutput.trim());
     expect(parsed.ok).toBe(false);
-    expect(parsed.error.code).toBe('NETWORK_ERROR');
+    expect(parsed.error.code).toBe('ERR_RPC_UNAVAILABLE');
   });
 
   it('DB failure takes priority when both DB and RPC fail', async () => {
@@ -113,6 +113,6 @@ describe('health handler error classification', () => {
     const parsed = JSON.parse(errOutput.trim());
     expect(parsed.ok).toBe(false);
     // DB failure is more critical, checked first
-    expect(parsed.error.code).toBe('NOT_INITIALIZED');
+    expect(parsed.error.code).toBe('ERR_NOT_INITIALIZED');
   });
 });

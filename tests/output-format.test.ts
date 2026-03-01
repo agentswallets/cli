@@ -27,23 +27,23 @@ describe('output envelope', () => {
     expect(out).toEqual({
       ok: false,
       data: null,
-      error: { code: 'PER_TX_LIMIT_EXCEEDED', message: 'blocked', details: { limit: 1 }, recovery_hint: 'Reduce amount or raise per-tx limit with `aw policy set`.' },
+      error: { code: 'ERR_PER_TX_LIMIT_EXCEEDED', message: 'blocked', details: { limit: 1 }, recovery_hint: 'Reduce amount or raise per-tx limit with `aw policy set`.' },
       meta: { request_id: 'req_test' }
     });
   });
 
-  it('maps ERR_WALLET_NOT_FOUND to WALLET_NOT_FOUND', () => {
+  it('passes through ERR_WALLET_NOT_FOUND directly', () => {
     const out = jsonError('ERR_WALLET_NOT_FOUND', 'wallet_id not found: w1', {}, 'req_test');
-    expect(out.error.code).toBe('WALLET_NOT_FOUND');
+    expect(out.error.code).toBe('ERR_WALLET_NOT_FOUND');
   });
 
-  it('maps ERR_MARKET_NOT_FOUND to MARKET_NOT_FOUND', () => {
+  it('passes through ERR_MARKET_NOT_FOUND directly', () => {
     const out = jsonError('ERR_MARKET_NOT_FOUND', 'market not found', {}, 'req_test');
-    expect(out.error.code).toBe('MARKET_NOT_FOUND');
+    expect(out.error.code).toBe('ERR_MARKET_NOT_FOUND');
   });
 
-  it('maps ERR_INVALID_AMOUNT to INVALID_AMOUNT', () => {
+  it('passes through ERR_INVALID_AMOUNT directly', () => {
     const out = jsonError('ERR_INVALID_AMOUNT', 'invalid amount', {}, 'req_test');
-    expect(out.error.code).toBe('INVALID_AMOUNT');
+    expect(out.error.code).toBe('ERR_INVALID_AMOUNT');
   });
 });
