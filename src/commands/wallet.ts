@@ -5,6 +5,7 @@ import { decryptSecretAsBuffer, encryptSecret, verifyMasterPassword } from '../c
 import { AppError } from '../core/errors.js';
 import { getSetting } from '../core/settings.js';
 import { isSessionValid } from '../core/session.js';
+import { fetchPolUsdPrice } from '../core/price.js';
 import { walletBalance } from '../core/tx-service.js';
 import { getWalletById, insertWallet, listWallets, listWalletsInternal } from '../core/wallet-store.js';
 import { confirmAction, getMasterPassword } from '../util/agent-input.js';
@@ -74,20 +75,33 @@ export async function walletBalanceCommand(walletId: string): Promise<{
   chain_id: number;
   balances: { POL: string; USDC: string; 'USDC.e': string };
   balances_number: { POL: number; USDC: number; 'USDC.e': number };
+  pol_usd_price?: number;
+  pol_usd_value?: number;
 }> {
   assertInitialized();
-  const result = await walletBalance(walletId);
+  const [result, polPrice] = await Promise.all([walletBalance(walletId), fetchPolUsdPrice()]);
+  const polAmount = parseFloat(result.balances.POL);
+  const polShort = polAmount.toFixed(4);
+  const usdcShort = parseFloat(result.balances.USDC).toFixed(2);
+  const usdceShort = parseFloat(result.balances['USDC.e']).toFixed(2);
+
+  let polDisplay = polShort;
+  if (polPrice !== null) {
+    polDisplay = `${polShort} ($${(polAmount * polPrice).toFixed(2)})`;
+  }
+
   return {
     name: result.name,
     address: result.address,
     chain: CHAIN_NAME,
     chain_id: result.chain_id,
-    balances: result.balances,
+    balances: { POL: polDisplay, USDC: usdcShort, 'USDC.e': usdceShort },
     balances_number: {
-      POL: parseFloat(result.balances.POL),
+      POL: polAmount,
       USDC: parseFloat(result.balances.USDC),
       'USDC.e': parseFloat(result.balances['USDC.e'])
-    }
+    },
+    ...(polPrice !== null ? { pol_usd_price: polPrice, pol_usd_value: parseFloat((polAmount * polPrice).toFixed(2)) } : {})
   };
 }
 
@@ -99,6 +113,8 @@ export async function walletBalanceAllCommand(): Promise<{
     chain_id: number;
     balances: { POL: string; USDC: string; 'USDC.e': string };
     balances_number: { POL: number; USDC: number; 'USDC.e': number };
+    pol_usd_price?: number;
+    pol_usd_value?: number;
   }>;
 }> {
   assertInitialized();
@@ -106,23 +122,33 @@ export async function walletBalanceAllCommand(): Promise<{
   if (walletRows.length === 0) {
     return { wallets: [] };
   }
-  const results = await Promise.all(
-    walletRows.map(async (w) => {
-      const bal = await walletBalance(w.id);
-      return {
-        name: bal.name,
-        address: bal.address,
-        chain: CHAIN_NAME,
-        chain_id: bal.chain_id,
-        balances: bal.balances,
-        balances_number: {
-          POL: parseFloat(bal.balances.POL),
-          USDC: parseFloat(bal.balances.USDC),
-          'USDC.e': parseFloat(bal.balances['USDC.e'])
-        }
-      };
-    })
-  );
+  const [polPrice, ...balances] = await Promise.all([
+    fetchPolUsdPrice(),
+    ...walletRows.map(w => walletBalance(w.id))
+  ]);
+  const results = balances.map((bal) => {
+    const polAmount = parseFloat(bal.balances.POL);
+    const polShort = polAmount.toFixed(4);
+    const usdcShort = parseFloat(bal.balances.USDC).toFixed(2);
+    const usdceShort = parseFloat(bal.balances['USDC.e']).toFixed(2);
+    let polDisplay = polShort;
+    if (polPrice !== null) {
+      polDisplay = `${polShort} ($${(polAmount * (polPrice as number)).toFixed(2)})`;
+    }
+    return {
+      name: bal.name,
+      address: bal.address,
+      chain: CHAIN_NAME,
+      chain_id: bal.chain_id,
+      balances: { POL: polDisplay, USDC: usdcShort, 'USDC.e': usdceShort },
+      balances_number: {
+        POL: polAmount,
+        USDC: parseFloat(bal.balances.USDC),
+        'USDC.e': parseFloat(bal.balances['USDC.e'])
+      },
+      ...(polPrice !== null ? { pol_usd_price: polPrice as number, pol_usd_value: parseFloat((polAmount * (polPrice as number)).toFixed(2)) } : {})
+    };
+  });
   return { wallets: results };
 }
 
