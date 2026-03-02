@@ -2,7 +2,7 @@ import { assertInitialized, getDb } from '../core/db.js';
 import { verifyMasterPassword } from '../core/crypto.js';
 import { AppError } from '../core/errors.js';
 import { getSetting } from '../core/settings.js';
-import { createSession } from '../core/session.js';
+import { createSession, type SessionMode } from '../core/session.js';
 import { getMasterPassword } from '../util/agent-input.js';
 import { logAudit } from '../core/audit-service.js';
 
@@ -43,7 +43,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export async function unlockCommand(): Promise<{ status: string; token_file: string; expires_at: string }> {
+export async function unlockCommand(opts?: { single?: boolean }): Promise<{ status: string; token_file: string; expires_at: string; mode: SessionMode }> {
   assertInitialized();
 
   // S6: Rate limit failed login attempts with exponential backoff
@@ -65,7 +65,8 @@ export async function unlockCommand(): Promise<{ status: string; token_file: str
     throw new AppError('ERR_NEED_UNLOCK', 'Invalid password');
   }
   clearFailedAttempts();
-  const session = createSession();
-  logAudit({ action: 'unlock', request: {}, decision: 'ok' });
-  return { status: 'unlocked', token_file: session.token_file, expires_at: session.expires_at };
+  const mode: SessionMode = opts?.single ? 'single-op' : 'standard';
+  const session = createSession(undefined, mode);
+  logAudit({ action: 'unlock', request: { mode }, decision: 'ok' });
+  return { status: 'unlocked', token_file: session.token_file, expires_at: session.expires_at, mode: session.mode };
 }

@@ -5,9 +5,12 @@ import { getHomeDir, getSessionPath, getSessionTokenPath } from './config.js';
 import { SESSION_TTL_MINUTES } from './constants.js';
 import { constantTimeEqual, randomToken, sha256 } from './crypto.js';
 
+export type SessionMode = 'standard' | 'single-op';
+
 type SessionRecord = {
   token_hash: string;
   expires_at: string;
+  mode?: SessionMode;
 };
 
 /** H-4: Restrict token file path to AGENTSWALLETS_HOME only (not arbitrary paths under $HOME). */
@@ -41,14 +44,14 @@ function readTokenFromEnvOrFile(): string | null {
   return null;
 }
 
-export function createSession(ttlMinutes = SESSION_TTL_MINUTES): { token: string; token_file: string; expires_at: string } {
+export function createSession(ttlMinutes = SESSION_TTL_MINUTES, mode: SessionMode = 'standard'): { token: string; token_file: string; expires_at: string; mode: SessionMode } {
   const token = randomToken();
   const expires = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
-  const payload: SessionRecord = { token_hash: sha256(token), expires_at: expires };
+  const payload: SessionRecord = { token_hash: sha256(token), expires_at: expires, mode };
   fs.writeFileSync(getSessionPath(), JSON.stringify(payload, null, 2), { mode: 0o600 });
   const tokenFile = getSessionTokenPath();
   fs.writeFileSync(tokenFile, token, { mode: 0o600 });
-  return { token, token_file: tokenFile, expires_at: expires };
+  return { token, token_file: tokenFile, expires_at: expires, mode };
 }
 
 /**
@@ -72,8 +75,13 @@ export function isSessionValid(): boolean {
   return constantTimeEqual(sha256(token), session.token_hash);
 }
 
-/** Sliding window: extend session expiry on successful command (no-op if session invalid). */
-export function touchSession(): void {
+/**
+ * Touch session after successful command.
+ * - standard mode: extend expiry (sliding window)
+ * - single-op mode + write: clear session (one-time use consumed)
+ * - single-op mode + read: no-op (preserve session, don't extend)
+ */
+export function touchSession(isWrite = false): void {
   let raw: string;
   try {
     raw = fs.readFileSync(getSessionPath(), 'utf8');
@@ -88,9 +96,26 @@ export function touchSession(): void {
   if (!token) return;
   if (!constantTimeEqual(sha256(token), session.token_hash)) return;
 
-  // Session valid — extend expiry
+  if (session.mode === 'single-op') {
+    if (isWrite) clearSession();
+    // read → no-op (don't extend, don't clear)
+    return;
+  }
+
+  // Standard mode — extend expiry
   session.expires_at = new Date(Date.now() + SESSION_TTL_MINUTES * 60_000).toISOString();
   fs.writeFileSync(getSessionPath(), JSON.stringify(session, null, 2), { mode: 0o600 });
+}
+
+/** Read current session mode (returns 'standard' if no mode field or no session). */
+export function getSessionMode(): SessionMode {
+  try {
+    const raw = fs.readFileSync(getSessionPath(), 'utf8');
+    const session = JSON.parse(raw) as SessionRecord;
+    return session.mode || 'standard';
+  } catch {
+    return 'standard';
+  }
 }
 
 /** L-3/L-4: Clear session + session-token files. */

@@ -133,7 +133,7 @@ export function wantsJsonOutput(opts: { json?: boolean; output?: string }): bool
 }
 
 export async function runCommand<T>(
-  opts: { json?: boolean; output?: string; requestId?: string; meta?: Record<string, unknown>; timeout?: string; skipRedact?: boolean },
+  opts: { json?: boolean; output?: string; requestId?: string; meta?: Record<string, unknown>; timeout?: string; skipRedact?: boolean; write?: boolean },
   fn: () => Promise<T> | T
 ): Promise<void> {
   if (opts.timeout) {
@@ -144,7 +144,7 @@ export async function runCommand<T>(
   const jsonMode = wantsJsonOutput(opts);
   try {
     const data = await fn();
-    touchSession();
+    touchSession(!!opts.write);
     if (jsonMode) {
       const raw = JSON.stringify(jsonOk(data, requestId, opts.meta));
       process.stdout.write((opts.skipRedact ? raw : redactSecrets(raw)) + '\n');

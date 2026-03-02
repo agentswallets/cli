@@ -78,7 +78,7 @@ export function buildCli(): Command {
   );
 
   withCommon(
-    program.command('unlock').description('Unlock session').addHelpText('after', '\nExample:\n  AW_MASTER_PASSWORD=*** aw unlock --json\n').action((opts: CommonOpts) => runCommand(opts, () => unlockCommand()))
+    program.command('unlock').description('Unlock session').option('--single', 'Single-operation session (invalidates after one write)').addHelpText('after', '\nExample:\n  AW_MASTER_PASSWORD=*** aw unlock --json\n  AW_MASTER_PASSWORD=*** aw unlock --single --json\n').action((opts: CommonOpts & { single?: boolean }) => runCommand(opts, () => unlockCommand({ single: opts.single })))
   );
 
   const wallet = program.command('wallet').description('Wallet operations');
@@ -89,7 +89,7 @@ export function buildCli(): Command {
       .description('Create wallet')
       .requiredOption('--name <name>', 'Wallet name')
       .addHelpText('after', '\nExample:\n  aw wallet create --name bot --json\n')
-      .action((opts: CommonOpts & { name: string }) => runCommand(opts, () => walletCreateCommand(opts.name)))
+      .action((opts: CommonOpts & { name: string }) => runCommand({ ...opts, write: true }, () => walletCreateCommand(opts.name)))
   );
   withCommon(wallet.command('list').description('List wallets').addHelpText('after', '\nExample:\n  aw wallet list --json\n').action((opts: CommonOpts) => runCommand(opts, () => walletListCommand())));
   withCommon(wallet.command('info [wallet]').description('Get wallet info').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet info alice --json\n  aw wallet info --wallet 0xCFEb...B0B --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => walletInfoCommand(resolveWalletArg(walletArg, opts.wallet)))));
@@ -125,7 +125,7 @@ export function buildCli(): Command {
         '\nExample:\n  aw wallet settings-set alice --limit-daily 500 --limit-per-tx 100 --json\n'
       )
       .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; limitDaily?: string; limitPerTx?: string; maxTxPerDay?: string; allowedTokens?: string; allowedAddresses?: string; requireApprovalAbove?: string }) =>
-        runCommand(opts, () =>
+        runCommand({ ...opts, write: true }, () =>
           policySetCommand(resolveWalletArg(walletArg, opts.wallet), {
             limitDaily: opts.limitDaily,
             limitPerTx: opts.limitPerTx,
@@ -155,7 +155,7 @@ export function buildCli(): Command {
       .action((opts: CommonOpts & { wallet: string; to: string; amount: string; token: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
-        return runCommand(opts, () =>
+        return runCommand({ ...opts, write: true }, () =>
           txSendCommand(walletId, {
             to: opts.to,
             amount: opts.amount,
@@ -194,7 +194,7 @@ export function buildCli(): Command {
       .action((opts: CommonOpts & { wallet: string; market: string; outcome: string; size: string; price: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
-        return runCommand(opts, () =>
+        return runCommand({ ...opts, write: true }, () =>
           polyBuyCommand(walletId, {
             market: opts.market,
             outcome: opts.outcome,
@@ -219,7 +219,7 @@ export function buildCli(): Command {
       .action((opts: CommonOpts & { wallet: string; position: string; size: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
-        return runCommand(opts, () =>
+        return runCommand({ ...opts, write: true }, () =>
           polySellCommand(walletId, {
             position: opts.position,
             size: opts.size,
@@ -239,7 +239,7 @@ export function buildCli(): Command {
       .requiredOption('--order-id <order_id>', 'Order id to cancel')
       .addHelpText('after', '\nExample:\n  aw predict cancel --wallet alice --order-id <order_id> --json\n')
       .action((opts: CommonOpts & { wallet: string; orderId: string }) =>
-        runCommand(opts, () => polyCancelCommand(resolveWalletArg(undefined, opts.wallet), opts.orderId))
+        runCommand({ ...opts, write: true }, () => polyCancelCommand(resolveWalletArg(undefined, opts.wallet), opts.orderId))
       )
   );
   withCommon(
@@ -259,7 +259,7 @@ export function buildCli(): Command {
       .requiredOption('--wallet <wallet>', 'Wallet name or address')
       .addHelpText('after', '\nExample:\n  aw predict approve-set --wallet alice --json\n')
       .action((opts: CommonOpts & { wallet: string }) =>
-        runCommand(opts, () => polyApproveSetCommand(resolveWalletArg(undefined, opts.wallet)))
+        runCommand({ ...opts, write: true }, () => polyApproveSetCommand(resolveWalletArg(undefined, opts.wallet)))
       )
   );
   withCommon(
@@ -281,7 +281,7 @@ export function buildCli(): Command {
       .requiredOption('--amount <n>', 'Amount in USDC')
       .addHelpText('after', '\nExample:\n  aw predict ctf-split --wallet alice --condition 0xabc... --amount 5 --json\n')
       .action((opts: CommonOpts & { wallet: string; condition: string; amount: string }) =>
-        runCommand(opts, () => polyCtfSplitCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, amount: opts.amount }))
+        runCommand({ ...opts, write: true }, () => polyCtfSplitCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, amount: opts.amount }))
       )
   );
   withCommon(
@@ -293,7 +293,7 @@ export function buildCli(): Command {
       .requiredOption('--amount <n>', 'Amount in USDC')
       .addHelpText('after', '\nExample:\n  aw predict ctf-merge --wallet alice --condition 0xabc... --amount 5 --json\n')
       .action((opts: CommonOpts & { wallet: string; condition: string; amount: string }) =>
-        runCommand(opts, () => polyCtfMergeCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, amount: opts.amount }))
+        runCommand({ ...opts, write: true }, () => polyCtfMergeCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, amount: opts.amount }))
       )
   );
   withCommon(
@@ -304,7 +304,7 @@ export function buildCli(): Command {
       .requiredOption('--condition <condition_id>', 'Condition ID (0x-prefixed)')
       .addHelpText('after', '\nExample:\n  aw predict ctf-redeem --wallet alice --condition 0xabc... --json\n')
       .action((opts: CommonOpts & { wallet: string; condition: string }) =>
-        runCommand(opts, () => polyCtfRedeemCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition }))
+        runCommand({ ...opts, write: true }, () => polyCtfRedeemCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition }))
       )
   );
   withCommon(
@@ -334,7 +334,7 @@ export function buildCli(): Command {
       .action((opts: CommonOpts & { wallet: string; to: string; amount: string; token: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
-        return runCommand(opts, () =>
+        return runCommand({ ...opts, write: true }, () =>
           txSendCommand(walletId, {
             to: opts.to,
             amount: opts.amount,
@@ -380,7 +380,7 @@ export function buildCli(): Command {
       .option('--require-approval-above <n>', 'Require approval above this amount (0 to clear)')
       .addHelpText('after', '\nExample:\n  aw policy set alice --limit-daily 500 --limit-per-tx 100 --json\n  aw policy set --wallet alice --allowed-tokens POL,USDC --max-tx-per-day 50 --json\n')
       .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; limitDaily?: string; limitPerTx?: string; maxTxPerDay?: string; allowedTokens?: string; allowedAddresses?: string; requireApprovalAbove?: string }) =>
-        runCommand(opts, () => policySetCommand(resolveWalletArg(walletArg, opts.wallet), {
+        runCommand({ ...opts, write: true }, () => policySetCommand(resolveWalletArg(walletArg, opts.wallet), {
           limitDaily: opts.limitDaily,
           limitPerTx: opts.limitPerTx,
           maxTxPerDay: opts.maxTxPerDay,
