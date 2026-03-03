@@ -83,6 +83,12 @@ function runMigration() {
   if (!colNames.has('entry_hash')) {
     memDb.exec('ALTER TABLE audit_logs ADD COLUMN entry_hash TEXT');
   }
+  if (!colNames.has('wallet_address')) {
+    memDb.exec('ALTER TABLE audit_logs ADD COLUMN wallet_address TEXT');
+  }
+  if (!colNames.has('home_dir')) {
+    memDb.exec('ALTER TABLE audit_logs ADD COLUMN home_dir TEXT');
+  }
 }
 
 vi.mock('../src/core/db.js', () => ({
@@ -138,5 +144,20 @@ describe('DB migration: old schema without prev_hash/entry_hash', () => {
     const { initDbSchema } = await import('../src/core/db.js');
     initDbSchema();
     expect(() => initDbSchema()).not.toThrow();
+  });
+
+  it('adds wallet_address and home_dir columns to old audit_logs table', async () => {
+    const colsBefore = memDb.pragma('table_info(audit_logs)') as Array<{ name: string }>;
+    const namesBefore = colsBefore.map(c => c.name);
+    expect(namesBefore).not.toContain('wallet_address');
+    expect(namesBefore).not.toContain('home_dir');
+
+    const { initDbSchema } = await import('../src/core/db.js');
+    initDbSchema();
+
+    const colsAfter = memDb.pragma('table_info(audit_logs)') as Array<{ name: string }>;
+    const namesAfter = colsAfter.map(c => c.name);
+    expect(namesAfter).toContain('wallet_address');
+    expect(namesAfter).toContain('home_dir');
   });
 });

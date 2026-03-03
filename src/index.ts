@@ -8,7 +8,7 @@ import { CLI_VERSION } from './core/version.js';
 import { destroyProviders } from './core/rpc.js';
 import { redactSecrets } from './util/redact.js';
 import { buildCli, commandSchema } from './cli.js';
-import { getDbPath } from './core/config.js';
+import { getDbPath, getHomeDir } from './core/config.js';
 
 // Safety net: redact any sensitive data from unhandled rejections before they hit stderr.
 process.on('unhandledRejection', (reason) => {
@@ -77,11 +77,12 @@ if (bareArgs.length === 0 && !process.argv.includes('--help') && !process.argv.i
       process.stdout.write(JSON.stringify(jsonOk({
         version: CLI_VERSION,
         initialized: false,
+        home_dir: getHomeDir(),
         message: 'Welcome to AgentsWallets. Run `aw init --json` to get started.',
         next_step: 'aw init --json'
       })) + '\n');
     } else {
-      process.stdout.write(JSON.stringify(jsonOk(commandSchema(cli))) + '\n');
+      process.stdout.write(JSON.stringify(jsonOk({ ...commandSchema(cli), home_dir: getHomeDir() })) + '\n');
     }
   } else {
     if (!initialized) {

@@ -4,12 +4,14 @@ import { getProvider } from '../core/rpc.js';
 import { CHAIN_ID, CHAIN_NAME, DEFAULT_RPC_URL } from '../core/constants.js';
 import { CLI_VERSION } from '../core/version.js';
 import { redactUrl, safeSummary } from '../util/redact.js';
+import { getHomeDir } from '../core/config.js';
 
 type HealthStatus = {
   ok: boolean;
   version: string;
   chain: string;
   chain_id: number;
+  home_dir: string;
   db: { ok: boolean; error?: string };
   session: { ok: boolean };
   rpc: { ok: boolean; url: string; chain_id?: number; error?: string };
@@ -23,6 +25,7 @@ export async function healthCommand(): Promise<HealthStatus> {
     version: CLI_VERSION,
     chain: CHAIN_NAME,
     chain_id: CHAIN_ID,
+    home_dir: getHomeDir(),
     db: { ok: false },
     session: { ok: false },
     rpc: { ok: false, url: redactUrl(rawUrl) },

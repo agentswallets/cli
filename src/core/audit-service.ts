@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { getDb } from './db.js';
+import { getHomeDir } from './config.js';
 import { redactSecrets } from '../util/redact.js';
 
 function sha256(data: string): string {
@@ -26,6 +27,16 @@ export function logAudit(input: {
   const requestJson = capJson(redactSecrets(JSON.stringify(input.request ?? {})));
   const resultJson = input.result ? capJson(redactSecrets(JSON.stringify(input.result))) : null;
 
+  // Auto-resolve wallet on-chain address from wallet_id (best-effort)
+  let walletAddress: string | null = null;
+  if (input.wallet_id) {
+    try {
+      const row = db.prepare('SELECT address FROM wallets WHERE id=?').get(input.wallet_id) as { address: string } | undefined;
+      walletAddress = row?.address ?? null;
+    } catch { /* ignore — table may not exist yet during init */ }
+  }
+  const homeDir = getHomeDir();
+
   // S5/C1: Wrap SELECT prev_hash + INSERT in a transaction to prevent race conditions
   db.transaction(() => {
     const last = db.prepare('SELECT entry_hash FROM audit_logs ORDER BY rowid DESC LIMIT 1').get() as { entry_hash: string | null } | undefined;
@@ -34,8 +45,8 @@ export function logAudit(input: {
     const entryHash = sha256(`${prevHash}${id}${input.action}${requestJson}${input.decision}${now}`);
 
     db.prepare(
-      `INSERT INTO audit_logs(id,wallet_id,action,request_json,decision,result_json,error_code,prev_hash,entry_hash,created_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO audit_logs(id,wallet_id,action,request_json,decision,result_json,error_code,prev_hash,entry_hash,wallet_address,home_dir,created_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       id,
       input.wallet_id ?? null,
@@ -46,6 +57,8 @@ export function logAudit(input: {
       input.error_code ?? null,
       prevHash,
       entryHash,
+      walletAddress,
+      homeDir,
       now
     );
   })();
@@ -61,6 +74,8 @@ export type AuditLogRow = {
   error_code: string | null;
   prev_hash: string | null;
   entry_hash: string | null;
+  wallet_address: string | null;
+  home_dir: string | null;
   created_at: string;
 };
 
@@ -73,14 +88,14 @@ export function listAuditLogs(input: {
   if (input.action) {
     return db
       .prepare(
-        `SELECT id,wallet_id,action,request_json,decision,result_json,error_code,prev_hash,entry_hash,created_at
+        `SELECT id,wallet_id,action,request_json,decision,result_json,error_code,prev_hash,entry_hash,wallet_address,home_dir,created_at
          FROM audit_logs WHERE wallet_id=? AND action=? ORDER BY created_at DESC LIMIT ?`
       )
       .all(input.wallet_id, input.action, input.limit) as AuditLogRow[];
   }
   return db
     .prepare(
-      `SELECT id,wallet_id,action,request_json,decision,result_json,error_code,prev_hash,entry_hash,created_at
+      `SELECT id,wallet_id,action,request_json,decision,result_json,error_code,prev_hash,entry_hash,wallet_address,home_dir,created_at
        FROM audit_logs WHERE wallet_id=? ORDER BY created_at DESC LIMIT ?`
     )
     .all(input.wallet_id, input.limit) as AuditLogRow[];

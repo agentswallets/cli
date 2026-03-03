@@ -187,6 +187,25 @@ describe('health command', () => {
     expect(result.rpc.error).toBeDefined();
   });
 
+  it('returns home_dir in health output', async () => {
+    vi.resetModules();
+    vi.doMock('../src/core/db.js', () => ({
+      getDb: () => ({}),
+      ensureDataDir: () => {},
+      isInitialized: () => true,
+      assertInitialized: () => {}
+    }));
+    vi.doMock('../src/core/session.js', () => ({ isSessionValid: () => false }));
+    vi.doMock('../src/core/rpc.js', () => ({
+      getProvider: () => ({ getNetwork: async () => ({ chainId: 137n }) })
+    }));
+    const { healthCommand } = await import('../src/commands/health.js');
+    const result = await healthCommand();
+    expect(result).toHaveProperty('home_dir');
+    expect(typeof result.home_dir).toBe('string');
+    expect(result.home_dir.length).toBeGreaterThan(0);
+  });
+
   it('tries polymarket-cli before polymarket', async () => {
     const callLog: string[] = [];
     vi.resetModules();

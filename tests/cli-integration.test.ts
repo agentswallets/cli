@@ -47,7 +47,9 @@ describe('CLI E2E integration', () => {
     const output = String(writeSpy.mock.calls[0]?.[0]);
     const parsed = JSON.parse(output.trim());
     expect(parsed.ok).toBe(true);
-    expect(parsed.data).toEqual({ wallets: [], hint: 'No wallets found. Create one with: aw wallet create --name <name>' });
+    expect(parsed.data.wallets).toEqual([]);
+    expect(parsed.data.hint).toBe('No wallets found. Create one with: aw wallet create --name <name>');
+    expect(parsed.data.home_dir).toBeTruthy();
     expect(parsed.meta.request_id).toBeTruthy();
   });
 

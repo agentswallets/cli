@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   error_code TEXT,
   prev_hash TEXT,
   entry_hash TEXT,
+  wallet_address TEXT,
+  home_dir TEXT,
   created_at TEXT NOT NULL
 );
 

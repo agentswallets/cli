@@ -1,5 +1,6 @@
 import { Wallet } from 'ethers';
 import { CHAIN_ID, CHAIN_NAME } from '../core/constants.js';
+import { getHomeDir } from '../core/config.js';
 import { assertInitialized } from '../core/db.js';
 import { decryptSecretAsBuffer, encryptSecret, verifyMasterPassword } from '../core/crypto.js';
 import { AppError } from '../core/errors.js';
@@ -42,12 +43,12 @@ export async function walletCreateCommand(name: string): Promise<{ name: string;
   return { name: row.name, address: row.address, chain: CHAIN_NAME, chain_id: CHAIN_ID };
 }
 
-export function walletListCommand(): { wallets: Array<{ name: string; address: string; created_at: string }>; hint?: string } {
+export function walletListCommand(): { wallets: Array<{ name: string; address: string; created_at: string }>; home_dir: string; hint?: string } {
   assertInitialized();
   const wallets = listWallets();
   return wallets.length === 0
-    ? { wallets, hint: 'No wallets found. Create one with: aw wallet create --name <name>' }
-    : { wallets };
+    ? { wallets, home_dir: getHomeDir(), hint: 'No wallets found. Create one with: aw wallet create --name <name>' }
+    : { wallets, home_dir: getHomeDir() };
 }
 
 export function walletAddressCommand(walletId: string): { name: string; address: string } {

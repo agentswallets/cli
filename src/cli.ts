@@ -13,6 +13,7 @@ import {
   walletListCommand
 } from './commands/wallet.js';
 import { txHistoryCommand, txSendCommand, txStatusCommand } from './commands/tx.js';
+import { walletDrainCommand } from './commands/drain.js';
 import { polyApproveCheckCommand, polyApproveSetCommand, polyBridgeDepositCommand, polyBuyCommand, polyCancelCommand, polyCtfMergeCommand, polyCtfRedeemCommand, polyCtfSplitCommand, polyOrdersCommand, polyPositionsCommand, polySearchCommand, polySellCommand, polyUpdateBalanceCommand } from './commands/poly.js';
 import { policySetCommand, policyShowCommand } from './commands/policy.js';
 import { auditListCommand } from './commands/audit.js';
@@ -107,6 +108,21 @@ export function buildCli(): Command {
       .option('--danger-export', 'Confirm you want to export the private key')
       .addHelpText('after', '\nExample:\n  AW_ALLOW_EXPORT=1 aw wallet export-key alice --danger-export --yes --json\n')
       .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; dangerExport?: boolean }) => runCommand({ ...opts, skipRedact: true }, () => walletExportKeyCommand(resolveWalletArg(walletArg, opts.wallet), Boolean(opts.yes), Boolean(opts.dangerExport))))
+  );
+  withCommon(
+    wallet
+      .command('drain [wallet]')
+      .description('Drain all tokens from wallet to a destination address')
+      .option('--wallet <wallet>', 'Wallet name or address')
+      .requiredOption('--to <address>', 'Destination address')
+      .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
+      .option('--dry-run', 'Preview drain plan without executing transfers')
+      .addHelpText('after', '\nExample:\n  aw wallet drain alice --to 0x742d... --json\n  aw wallet drain alice --to 0x742d... --dry-run --json\n  aw wallet drain --wallet alice --to 0x742d... --idempotency-key drain1 --json\n')
+      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; to: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
+        const walletId = resolveWalletArg(walletArg, opts.wallet);
+        const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : undefined;
+        return runCommand({ ...opts, write: !opts.dryRun }, () => walletDrainCommand(walletId, { to: opts.to, idempotencyKey: idemKey, dryRun: opts.dryRun }));
+      })
   );
   withCommon(wallet.command('settings [wallet]').description('Show wallet policy (alias for: aw policy show)').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet settings alice --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => policyShowCommand(resolveWalletArg(walletArg, opts.wallet)))));
   withCommon(

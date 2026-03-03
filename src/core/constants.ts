@@ -23,3 +23,6 @@ export const DEFAULT_POLICY = {
 /** Conservative gas cost estimates in POL for preflight balance checks. */
 export const GAS_ESTIMATE_NATIVE_POL = 0.01;
 export const GAS_ESTIMATE_ERC20_POL = 0.005;
+
+/** Minimum stablecoin balance worth draining (below this = dust). */
+export const STABLECOIN_DUST_THRESHOLD = 0.01;

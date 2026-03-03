@@ -9,3 +9,5 @@ coverage
 .master_password
 *.sqlite
 *.sqlite-journal
+.env
+.env.*

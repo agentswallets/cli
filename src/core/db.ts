@@ -45,6 +45,12 @@ function migrateSchema(db: Database.Database): void {
   if (!colNames.has('entry_hash')) {
     db.exec('ALTER TABLE audit_logs ADD COLUMN entry_hash TEXT');
   }
+  if (!colNames.has('wallet_address')) {
+    db.exec('ALTER TABLE audit_logs ADD COLUMN wallet_address TEXT');
+  }
+  if (!colNames.has('home_dir')) {
+    db.exec('ALTER TABLE audit_logs ADD COLUMN home_dir TEXT');
+  }
 }
 
 export function isInitialized(): boolean {
