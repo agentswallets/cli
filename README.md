@@ -39,7 +39,8 @@ aw send --wallet alice --to 0x... --amount 1 --token USDC --json
 
 - `AW_NON_INTERACTIVE=1` — disable interactive prompts
 - `AW_JSON=1` — force structured JSON output
-- `AW_MASTER_PASSWORD` — provide password without prompt
+- `AW_MASTER_PASSWORD` — provide password without prompt (cleared after read)
+- `AW_MASTER_PASSWORD_ENV` — safer alternative: name of env var holding the password (e.g. `MY_SECRET`)
 
 ## Commands
 
@@ -48,8 +49,9 @@ aw send --wallet alice --to 0x... --amount 1 --token USDC --json
 ```bash
 aw init                              # Initialize data store
 aw unlock                            # Start authenticated session
+aw unlock --single                   # Single-op session (auto-locks after one write)
 aw lock                              # End session
-aw health                            # Check system status
+aw health                            # Check system status (includes home_dir)
 ```
 
 ### Wallet
@@ -61,6 +63,8 @@ aw wallet info --wallet <name>       # Wallet details
 aw wallet balance --wallet <name>    # Check balances (POL, USDC, USDC.e)
 aw wallet balance --all              # All wallets at once
 aw wallet deposit-address --wallet <name>  # Get deposit address
+aw wallet drain --wallet <name> --to 0x...          # Drain all tokens to address
+aw wallet drain --wallet <name> --to 0x... --dry-run  # Preview drain plan
 ```
 
 ### Transfers
@@ -174,7 +178,8 @@ All commands output a consistent JSON envelope:
 |----------|-------------|
 | `AW_JSON` | Force JSON output (`1`) |
 | `AW_NON_INTERACTIVE` | Disable prompts (`1`) |
-| `AW_MASTER_PASSWORD` | Master password for non-interactive unlock |
+| `AW_MASTER_PASSWORD` | Master password for non-interactive unlock (cleared after read) |
+| `AW_MASTER_PASSWORD_ENV` | Name of env var holding the password (safer indirection) |
 | `AW_RPC_URL` | Custom Polygon RPC URL(s), comma-separated |
 | `AW_SESSION_TTL_MINUTES` | Session timeout (default: 15, max: 15) |
 | `AW_ALLOW_EXPORT` | Enable `wallet export-key` (`1`) |
