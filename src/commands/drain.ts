@@ -4,9 +4,10 @@ import { isSessionValid } from '../core/session.js';
 import { AppError } from '../core/errors.js';
 import { walletBalance } from '../core/tx-service.js';
 import { getWalletById } from '../core/wallet-store.js';
-import { GAS_ESTIMATE_NATIVE_POL, GAS_ESTIMATE_ERC20_POL, STABLECOIN_DUST_THRESHOLD } from '../core/constants.js';
+import { STABLECOIN_DUST_THRESHOLD } from '../core/constants.js';
+import { type ChainKey, getChain, resolveChainKey } from '../core/chains.js';
 import { logAudit } from '../core/audit-service.js';
-import { requireAddress } from '../util/validate.js';
+import { requireChainAddress } from '../util/validate.js';
 import { txSendCommand } from './tx.js';
 
 type DrainTokenResult = {
@@ -15,112 +16,121 @@ type DrainTokenResult = {
   status: 'sent' | 'dust' | 'zero' | 'error' | 'preview';
   tx_id?: string;
   tx_hash?: string;
+  explorer_url?: string;
   error?: string;
 };
 
 export async function walletDrainCommand(
   walletId: string,
-  opts: { to: string; idempotencyKey?: string; dryRun?: boolean }
+  opts: { to: string; idempotencyKey?: string; dryRun?: boolean; chain?: string }
 ): Promise<{
   name: string;
   address: string;
   to: string;
+  chain: string;
   results: DrainTokenResult[];
   dry_run?: boolean;
 }> {
   assertInitialized();
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
 
-  const to = requireAddress(opts.to);
+  const chainKey = resolveChainKey(opts.chain);
+  const chain = getChain(chainKey);
+  const to = requireChainAddress(opts.to, chain.chainType);
   const wallet = getWalletById(walletId);
   const baseKey = opts.idempotencyKey ?? crypto.randomUUID();
+  const erc20Tokens = chain.tokens.filter(t => t.address !== null);
+  const nativeToken = chain.tokens.find(t => t.address === null)!;
+  const nativeUnit = 10 ** nativeToken.decimals;
 
   const results: DrainTokenResult[] = [];
 
   // Step 1: Get initial balances
-  const bal = await walletBalance(walletId);
+  const bal = await walletBalance(walletId, chainKey);
 
   // ── dry-run branch: preview only, no transfers / DB writes / audit ──
   if (opts.dryRun) {
     let erc20PreviewCount = 0;
-    for (const token of ['USDC', 'USDC.e'] as const) {
-      const amount = parseFloat(bal.balances[token]);
+    for (const token of erc20Tokens) {
+      const amount = parseFloat(bal.balances[token.symbol]);
       if (amount === 0) {
-        results.push({ token, amount: '0', status: 'zero' });
+        results.push({ token: token.symbol, amount: '0', status: 'zero' });
       } else if (amount < STABLECOIN_DUST_THRESHOLD) {
-        results.push({ token, amount: String(amount), status: 'dust' });
+        results.push({ token: token.symbol, amount: String(amount), status: 'dust' });
       } else {
-        results.push({ token, amount: String(amount), status: 'preview' });
+        results.push({ token: token.symbol, amount: String(amount), status: 'preview' });
         erc20PreviewCount++;
       }
     }
 
-    // Estimate POL remaining after ERC20 gas
-    const polBalance = parseFloat(bal.balances.POL);
-    const estimatedGas = erc20PreviewCount * GAS_ESTIMATE_ERC20_POL + GAS_ESTIMATE_NATIVE_POL;
-    if (polBalance === 0) {
-      results.push({ token: 'POL', amount: '0', status: 'zero' });
-    } else if (polBalance <= estimatedGas) {
-      results.push({ token: 'POL', amount: String(polBalance), status: 'dust' });
+    // Estimate native token remaining after ERC20 gas
+    const nativeBalance = parseFloat(bal.balances[nativeToken.symbol]);
+    const estimatedGas = erc20PreviewCount * chain.gasEstimateErc20 + chain.gasEstimateNative;
+    if (nativeBalance === 0) {
+      results.push({ token: nativeToken.symbol, amount: '0', status: 'zero' });
+    } else if (nativeBalance <= estimatedGas) {
+      results.push({ token: nativeToken.symbol, amount: String(nativeBalance), status: 'dust' });
     } else {
-      const polToSend = polBalance - estimatedGas;
-      const polAmount = Math.floor(polToSend * 1e18) / 1e18;
-      results.push({ token: 'POL', amount: String(polAmount), status: 'preview' });
+      const toSend = nativeBalance - estimatedGas;
+      const rounded = Math.floor(toSend * nativeUnit) / nativeUnit;
+      results.push({ token: nativeToken.symbol, amount: String(rounded), status: 'preview' });
     }
 
-    return { name: wallet.name, address: wallet.address, to, results, dry_run: true };
+    return { name: wallet.name, address: wallet.address, to, chain: chain.name, results, dry_run: true };
   }
 
   // ── live execution ──
 
-  // Step 2: Transfer ERC20 tokens first (need POL for gas)
-  for (const token of ['USDC', 'USDC.e'] as const) {
-    const amount = parseFloat(bal.balances[token]);
+  // Step 2: Transfer ERC20 tokens first (need native token for gas)
+  for (const token of erc20Tokens) {
+    const amount = parseFloat(bal.balances[token.symbol]);
     if (amount === 0) {
-      results.push({ token, amount: '0', status: 'zero' });
+      results.push({ token: token.symbol, amount: '0', status: 'zero' });
       continue;
     }
     if (amount < STABLECOIN_DUST_THRESHOLD) {
-      results.push({ token, amount: String(amount), status: 'dust' });
+      results.push({ token: token.symbol, amount: String(amount), status: 'dust' });
       continue;
     }
     try {
       const res = await txSendCommand(walletId, {
         to,
         amount: String(amount),
-        token,
-        idempotencyKey: `${baseKey}-${token}`
+        token: token.symbol,
+        idempotencyKey: `${baseKey}-${token.symbol}`,
+        chain: chainKey,
       });
-      results.push({ token, amount: String(amount), status: 'sent', tx_id: res.tx_id, tx_hash: res.tx_hash ?? undefined });
+      results.push({ token: token.symbol, amount: String(amount), status: 'sent', tx_id: res.tx_id, tx_hash: res.tx_hash ?? undefined, explorer_url: res.explorer_url });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      results.push({ token, amount: String(amount), status: 'error', error: msg });
+      results.push({ token: token.symbol, amount: String(amount), status: 'error', error: msg });
     }
   }
 
-  // Step 3: Re-check POL balance (gas consumed by ERC20 transfers)
-  const balAfter = await walletBalance(walletId);
-  const polBalance = parseFloat(balAfter.balances.POL);
+  // Step 3: Re-check native balance (gas consumed by ERC20 transfers)
+  const balAfter = await walletBalance(walletId, chainKey);
+  const nativeBalance = parseFloat(balAfter.balances[nativeToken.symbol]);
 
-  if (polBalance === 0) {
-    results.push({ token: 'POL', amount: '0', status: 'zero' });
-  } else if (polBalance <= GAS_ESTIMATE_NATIVE_POL) {
-    results.push({ token: 'POL', amount: String(polBalance), status: 'dust' });
+  if (nativeBalance === 0) {
+    results.push({ token: nativeToken.symbol, amount: '0', status: 'zero' });
+  } else if (nativeBalance <= chain.gasEstimateNative) {
+    results.push({ token: nativeToken.symbol, amount: String(nativeBalance), status: 'dust' });
   } else {
-    const polToSend = polBalance - GAS_ESTIMATE_NATIVE_POL;
+    const toSend = nativeBalance - chain.gasEstimateNative;
     // Round down to avoid floating-point over-send
-    const polAmount = Math.floor(polToSend * 1e18) / 1e18;
+    const rounded = Math.floor(toSend * nativeUnit) / nativeUnit;
     try {
       const res = await txSendCommand(walletId, {
         to,
-        amount: String(polAmount),
-        token: 'POL',
-        idempotencyKey: `${baseKey}-POL`
+        amount: String(rounded),
+        token: nativeToken.symbol,
+        idempotencyKey: `${baseKey}-${nativeToken.symbol}`,
+        chain: chainKey,
       });
-      results.push({ token: 'POL', amount: String(polAmount), status: 'sent', tx_id: res.tx_id, tx_hash: res.tx_hash ?? undefined });
+      results.push({ token: nativeToken.symbol, amount: String(rounded), status: 'sent', tx_id: res.tx_id, tx_hash: res.tx_hash ?? undefined, explorer_url: res.explorer_url });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      results.push({ token: 'POL', amount: String(polAmount), status: 'error', error: msg });
+      results.push({ token: nativeToken.symbol, amount: String(rounded), status: 'error', error: msg });
     }
   }
 
@@ -128,15 +138,18 @@ export async function walletDrainCommand(
   logAudit({
     wallet_id: walletId,
     action: 'wallet.drain',
-    request: { to, idempotencyKey: baseKey },
+    request: { to, idempotencyKey: baseKey, chain: chainKey },
     decision: 'ok',
-    result: { results }
+    result: { results },
+    chain_name: chain.name,
+    chain_id: chain.chainId
   });
 
   return {
     name: wallet.name,
     address: wallet.address,
     to,
+    chain: chain.name,
     results
   };
 }

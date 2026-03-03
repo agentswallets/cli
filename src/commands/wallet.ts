@@ -1,12 +1,15 @@
-import { Wallet } from 'ethers';
-import { CHAIN_ID, CHAIN_NAME } from '../core/constants.js';
+import { HDNodeWallet, Wallet } from 'ethers';
+import * as bip39 from 'bip39';
+import { derivePath } from 'ed25519-hd-key';
+import { Keypair } from '@solana/web3.js';
+import { type ChainKey, CHAINS, getAllChainKeys, getChain, getDefaultChainKey, getSupportedChainsSummary, isSolanaChain, resolveChainKey } from '../core/chains.js';
 import { getHomeDir } from '../core/config.js';
 import { assertInitialized } from '../core/db.js';
 import { decryptSecretAsBuffer, encryptSecret, verifyMasterPassword } from '../core/crypto.js';
 import { AppError } from '../core/errors.js';
 import { getSetting } from '../core/settings.js';
 import { isSessionValid } from '../core/session.js';
-import { fetchPolUsdPrice } from '../core/price.js';
+import { fetchNativeTokenPrice } from '../core/price.js';
 import { walletBalance } from '../core/tx-service.js';
 import { getWalletById, insertWallet, listWallets, listWalletsInternal } from '../core/wallet-store.js';
 import { confirmAction, getMasterPassword } from '../util/agent-input.js';
@@ -14,36 +17,84 @@ import { logAudit } from '../core/audit-service.js';
 
 const WALLET_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
-export async function walletCreateCommand(name: string): Promise<{ name: string; address: string; chain: string; chain_id: number }> {
+export async function walletCreateCommand(name: string): Promise<{
+  name: string;
+  key_type: 'hd';
+  evm_address: string;
+  solana_address: string;
+  default_chain: string;
+  supported_chains: Array<{ name: string; native_token: string; tokens: string[] }>;
+  hint: string;
+}> {
   assertInitialized();
   if (!name) throw new AppError('ERR_INVALID_PARAMS', '--name is required');
   if (!WALLET_NAME_RE.test(name)) {
     throw new AppError('ERR_INVALID_PARAMS', 'Wallet name must be 1-64 chars of [a-zA-Z0-9_-]');
   }
 
-  // If session is already unlocked, get password silently (keychain/env) — skip verification.
-  // Password is still needed to encrypt the new wallet's private key.
-  const sessionValid = isSessionValid();
-  const password = await getMasterPassword(sessionValid ? 'Master password (for encrypt): ' : 'Master password: ');
+  const chain = getChain(getDefaultChainKey());
 
-  if (!sessionValid) {
-    const salt = getSetting('master_password_salt');
-    const expected = getSetting('master_password_verifier');
-    const kdfRaw = getSetting('master_password_kdf_params');
-    if (!salt || !expected) throw new AppError('ERR_NOT_INITIALIZED', 'Not initialized');
-    if (!verifyMasterPassword(password, salt, expected, kdfRaw)) {
-      throw new AppError('ERR_AUTH_FAILED', 'Invalid master password');
-    }
+  // Always verify password — even when session is valid, a wrong password
+  // would encrypt the new wallet's key with an unrecoverable password.
+  const password = await getMasterPassword('Master password: ');
+
+  const salt = getSetting('master_password_salt');
+  const expected = getSetting('master_password_verifier');
+  const kdfRaw = getSetting('master_password_kdf_params');
+  if (!salt || !expected) throw new AppError('ERR_NOT_INITIALIZED', 'Not initialized');
+  if (!verifyMasterPassword(password, salt, expected, kdfRaw)) {
+    throw new AppError('ERR_AUTH_FAILED', 'Invalid master password');
   }
 
-  const wallet = Wallet.createRandom();
-  const encrypted = encryptSecret(wallet.privateKey, password);
-  const row = insertWallet(name, wallet.address, encrypted);
-  logAudit({ wallet_id: row.id, action: 'wallet.create', request: { name }, decision: 'ok' });
-  return { name: row.name, address: row.address, chain: CHAIN_NAME, chain_id: CHAIN_ID };
+  // Generate 24-word BIP-39 mnemonic
+  const mnemonic = bip39.generateMnemonic(256);
+  const seed = bip39.mnemonicToSeedSync(mnemonic);
+
+  let solDerivedKey: Buffer | null = null;
+  let solSecretKey: Uint8Array | null = null;
+  try {
+    // EVM derivation: m/44'/60'/0'/0/0
+    const hdNode = HDNodeWallet.fromSeed(seed);
+    const evmWallet = hdNode.derivePath("m/44'/60'/0'/0/0");
+
+    // Solana derivation: m/44'/501'/0'/0' (Ed25519)
+    const solDerived = derivePath("m/44'/501'/0'/0'", seed.toString('hex'));
+    solDerivedKey = solDerived.key;
+    const solanaKeypair = Keypair.fromSeed(solDerivedKey);
+    solSecretKey = solanaKeypair.secretKey;
+    const solanaAddress = solanaKeypair.publicKey.toBase58();
+
+    // Encrypt secrets
+    const encryptedMnemonic = encryptSecret(mnemonic, password);
+    const encryptedEvmKey = encryptSecret(evmWallet.privateKey, password);
+    const encryptedSolanaKey = encryptSecret(Buffer.from(solSecretKey).toString('hex'), password);
+
+    const row = insertWallet(name, evmWallet.address, encryptedEvmKey, {
+      key_type: 'hd',
+      encrypted_mnemonic: encryptedMnemonic,
+      encrypted_solana_key: encryptedSolanaKey,
+      solana_address: solanaAddress,
+    });
+
+    logAudit({ wallet_id: row.id, action: 'wallet.create', request: { name, key_type: 'hd' }, decision: 'ok', chain_name: chain.name, chain_id: chain.chainId });
+    return {
+      name: row.name,
+      key_type: 'hd',
+      evm_address: row.address,
+      solana_address: solanaAddress,
+      default_chain: chain.name,
+      supported_chains: getSupportedChainsSummary(),
+      hint: 'EVM chains share one address. Solana has a separate address. Use --chain to switch.',
+    };
+  } finally {
+    // Zero-fill sensitive key material
+    seed.fill(0);
+    solDerivedKey?.fill(0);
+    solSecretKey?.fill(0);
+  }
 }
 
-export function walletListCommand(): { wallets: Array<{ name: string; address: string; created_at: string }>; home_dir: string; hint?: string } {
+export function walletListCommand(): { wallets: Array<{ name: string; address: string; key_type: string; solana_address: string | null; created_at: string }>; home_dir: string; hint?: string } {
   assertInitialized();
   const wallets = listWallets();
   return wallets.length === 0
@@ -51,112 +102,239 @@ export function walletListCommand(): { wallets: Array<{ name: string; address: s
     : { wallets, home_dir: getHomeDir() };
 }
 
-export function walletAddressCommand(walletId: string): { name: string; address: string } {
+export function walletAddressCommand(walletId: string, chainOpt?: string): { name: string; address: string; chain?: string } {
   assertInitialized();
   const wallet = getWalletById(walletId);
+  if (chainOpt) {
+    const chainKey = resolveChainKey(chainOpt);
+    if (isSolanaChain(chainKey)) {
+      if (!wallet.solana_address) {
+        throw new AppError('ERR_INVALID_PARAMS', 'This wallet does not support Solana. Create a new wallet to use Solana.');
+      }
+      return { name: wallet.name, address: wallet.solana_address, chain: 'Solana' };
+    }
+  }
   return { name: wallet.name, address: wallet.address };
 }
 
 export function walletInfoCommand(
   walletId: string
-): { name: string; address: string; created_at: string } {
+): {
+  name: string; address: string; key_type: string; solana_address: string | null; created_at: string;
+  default_chain: string; supported_chains: Array<{ name: string; native_token: string; tokens: string[] }>;
+} {
   assertInitialized();
   const wallet = getWalletById(walletId);
   return {
     name: wallet.name,
     address: wallet.address,
-    created_at: wallet.created_at
+    key_type: wallet.key_type ?? 'legacy',
+    solana_address: wallet.solana_address ?? null,
+    created_at: wallet.created_at,
+    default_chain: getChain(getDefaultChainKey()).name,
+    supported_chains: getSupportedChainsSummary(),
   };
 }
 
-export async function walletBalanceCommand(walletId: string): Promise<{
+/** Determine display decimals: native tokens get 4, stablecoins get 2, SOL gets 6. */
+function displayDecimals(symbol: string, _tokenDecimals: number): number {
+  // Stablecoins (USDC, USDT, USDC.e, etc.) → 2 decimal places
+  if (/^USD/i.test(symbol)) return 2;
+  // SOL → 6 decimal places (smaller unit value than EVM native)
+  if (symbol === 'SOL') return 6;
+  // Other native tokens → 4 decimal places
+  return 4;
+}
+
+type ChainBalanceResult = {
+  chain: string;
+  address: string;
+  balances: Record<string, string>;
+  balances_number: Record<string, number>;
+  native_usd_price?: number;
+  native_usd_value?: number;
+};
+
+/** Format raw balance + price into the standard display shape. */
+function formatChainBalance(
+  rawBalances: Record<string, string>,
+  address: string,
+  chain: import('../core/chains.js').ChainConfig,
+  nativePrice: number | null,
+): ChainBalanceResult {
+  const balances: Record<string, string> = {};
+  const balancesNumber: Record<string, number> = {};
+  const nativeToken = chain.tokens.find(t => t.address === null)!;
+
+  for (const token of chain.tokens) {
+    const raw = parseFloat(rawBalances[token.symbol]);
+    const decimals = displayDecimals(token.symbol, token.decimals);
+    balancesNumber[token.symbol] = raw;
+
+    if (token.address === null && nativePrice !== null) {
+      balances[token.symbol] = `${raw.toFixed(decimals)} ($${(raw * nativePrice).toFixed(2)})`;
+    } else {
+      balances[token.symbol] = raw.toFixed(decimals);
+    }
+  }
+
+  const nativeAmount = balancesNumber[nativeToken.symbol];
+
+  return {
+    chain: chain.name,
+    address,
+    balances,
+    balances_number: balancesNumber,
+    ...(nativePrice !== null ? { native_usd_price: nativePrice, native_usd_value: parseFloat((nativeAmount * nativePrice).toFixed(2)) } : {}),
+  };
+}
+
+export async function walletBalanceCommand(walletId: string, chainOpt?: string): Promise<{
   name: string;
   address: string;
   chain: string;
-  chain_id: number;
-  balances: { POL: string; USDC: string; 'USDC.e': string };
-  balances_number: { POL: number; USDC: number; 'USDC.e': number };
-  pol_usd_price?: number;
-  pol_usd_value?: number;
+  balances: Record<string, string>;
+  balances_number: Record<string, number>;
+  native_usd_price?: number;
+  native_usd_value?: number;
 }> {
   assertInitialized();
-  const [result, polPrice] = await Promise.all([walletBalance(walletId), fetchPolUsdPrice()]);
-  const polAmount = parseFloat(result.balances.POL);
-  const polShort = polAmount.toFixed(4);
-  const usdcShort = parseFloat(result.balances.USDC).toFixed(2);
-  const usdceShort = parseFloat(result.balances['USDC.e']).toFixed(2);
+  const chainKey = resolveChainKey(chainOpt);
+  const chain = getChain(chainKey);
 
-  let polDisplay = polShort;
-  if (polPrice !== null) {
-    polDisplay = `${polShort} ($${(polAmount * polPrice).toFixed(2)})`;
-  }
+  const [result, nativePrice] = await Promise.all([
+    walletBalance(walletId, chainKey),
+    fetchNativeTokenPrice(chain.coinpaprikaNativeId),
+  ]);
 
-  return {
-    name: result.name,
-    address: result.address,
-    chain: CHAIN_NAME,
-    chain_id: result.chain_id,
-    balances: { POL: polDisplay, USDC: usdcShort, 'USDC.e': usdceShort },
-    balances_number: {
-      POL: polAmount,
-      USDC: parseFloat(result.balances.USDC),
-      'USDC.e': parseFloat(result.balances['USDC.e'])
-    },
-    ...(polPrice !== null ? { pol_usd_price: polPrice, pol_usd_value: parseFloat((polAmount * polPrice).toFixed(2)) } : {})
-  };
+  const formatted = formatChainBalance(result.balances, result.address, chain, nativePrice);
+  return { name: result.name, ...formatted };
 }
 
-export async function walletBalanceAllCommand(): Promise<{
+export async function walletBalanceAllCommand(chainOpt?: string): Promise<{
   wallets: Array<{
     name: string;
     address: string;
     chain: string;
-    chain_id: number;
-    balances: { POL: string; USDC: string; 'USDC.e': string };
-    balances_number: { POL: number; USDC: number; 'USDC.e': number };
-    pol_usd_price?: number;
-    pol_usd_value?: number;
+    balances: Record<string, string>;
+    balances_number: Record<string, number>;
+    native_usd_price?: number;
+    native_usd_value?: number;
+  }>;
+}> {
+  assertInitialized();
+  const chainKey = resolveChainKey(chainOpt);
+  const chain = getChain(chainKey);
+
+  let walletRows = listWalletsInternal();
+  if (walletRows.length === 0) {
+    return { wallets: [] };
+  }
+
+  // Skip legacy wallets that don't support Solana
+  if (isSolanaChain(chainKey)) {
+    walletRows = walletRows.filter(w => w.solana_address);
+    if (walletRows.length === 0) return { wallets: [] };
+  }
+
+  const [nativePrice, ...rawBalances] = await Promise.all([
+    fetchNativeTokenPrice(chain.coinpaprikaNativeId),
+    ...walletRows.map(w => walletBalance(w.id, chainKey)),
+  ]);
+
+  const results = rawBalances.map((bal) => {
+    const formatted = formatChainBalance(bal.balances, bal.address, chain, nativePrice);
+    return { name: bal.name, ...formatted };
+  });
+
+  return { wallets: results };
+}
+
+/** Single wallet × all chains (default when no --chain specified). */
+export async function walletBalanceAllChainsCommand(walletId: string): Promise<{
+  name: string;
+  chains: ChainBalanceResult[];
+}> {
+  assertInitialized();
+  const wallet = getWalletById(walletId);
+  const allKeys = getAllChainKeys();
+  const supportedKeys = wallet.solana_address ? allKeys : allKeys.filter(k => !isSolanaChain(k));
+
+  // Deduplicate price fetches — e.g. ETH/Base/Arbitrum share 'eth-ethereum'
+  const priceIdSet = new Set(supportedKeys.map(k => getChain(k).coinpaprikaNativeId));
+  const priceIds = [...priceIdSet];
+  const priceResults = await Promise.all(priceIds.map(id => fetchNativeTokenPrice(id)));
+  const priceMap = new Map<string, number | null>();
+  priceIds.forEach((id, i) => priceMap.set(id, priceResults[i]));
+
+  // Fetch balances for all chains concurrently; skip chains whose RPC fails
+  const balanceResults = await Promise.all(
+    supportedKeys.map(k =>
+      walletBalance(wallet.id, k).catch(() => null)
+    )
+  );
+
+  const chains: ChainBalanceResult[] = [];
+  for (let i = 0; i < supportedKeys.length; i++) {
+    const bal = balanceResults[i];
+    if (!bal) continue; // RPC failed — skip this chain
+    const chain = getChain(supportedKeys[i]);
+    const nativePrice = priceMap.get(chain.coinpaprikaNativeId) ?? null;
+    chains.push(formatChainBalance(bal.balances, bal.address, chain, nativePrice));
+  }
+
+  return { name: wallet.name, chains };
+}
+
+/** All wallets × all chains (--all without --chain). */
+export async function walletBalanceAllWalletsAllChainsCommand(): Promise<{
+  wallets: Array<{
+    name: string;
+    chains: ChainBalanceResult[];
   }>;
 }> {
   assertInitialized();
   const walletRows = listWalletsInternal();
-  if (walletRows.length === 0) {
-    return { wallets: [] };
-  }
-  const [polPrice, ...balances] = await Promise.all([
-    fetchPolUsdPrice(),
-    ...walletRows.map(w => walletBalance(w.id))
-  ]);
-  const results = balances.map((bal) => {
-    const polAmount = parseFloat(bal.balances.POL);
-    const polShort = polAmount.toFixed(4);
-    const usdcShort = parseFloat(bal.balances.USDC).toFixed(2);
-    const usdceShort = parseFloat(bal.balances['USDC.e']).toFixed(2);
-    let polDisplay = polShort;
-    if (polPrice !== null) {
-      polDisplay = `${polShort} ($${(polAmount * (polPrice as number)).toFixed(2)})`;
-    }
-    return {
-      name: bal.name,
-      address: bal.address,
-      chain: CHAIN_NAME,
-      chain_id: bal.chain_id,
-      balances: { POL: polDisplay, USDC: usdcShort, 'USDC.e': usdceShort },
-      balances_number: {
-        POL: polAmount,
-        USDC: parseFloat(bal.balances.USDC),
-        'USDC.e': parseFloat(bal.balances['USDC.e'])
-      },
-      ...(polPrice !== null ? { pol_usd_price: polPrice as number, pol_usd_value: parseFloat((polAmount * (polPrice as number)).toFixed(2)) } : {})
-    };
-  });
-  return { wallets: results };
+  if (walletRows.length === 0) return { wallets: [] };
+
+  // Pre-fetch all unique prices once
+  const allPriceIds = new Set(Object.values(CHAINS).map(c => c.coinpaprikaNativeId));
+  const priceIds = [...allPriceIds];
+  const priceResults = await Promise.all(priceIds.map(id => fetchNativeTokenPrice(id)));
+  const priceMap = new Map<string, number | null>();
+  priceIds.forEach((id, i) => priceMap.set(id, priceResults[i]));
+
+  const allKeys = getAllChainKeys();
+
+  const wallets = await Promise.all(
+    walletRows.map(async (w) => {
+      const supportedKeys = w.solana_address ? allKeys : allKeys.filter(k => !isSolanaChain(k));
+      const balanceResults = await Promise.all(
+        supportedKeys.map(k => walletBalance(w.id, k).catch(() => null))
+      );
+
+      const chains: ChainBalanceResult[] = [];
+      for (let i = 0; i < supportedKeys.length; i++) {
+        const bal = balanceResults[i];
+        if (!bal) continue;
+        const chain = getChain(supportedKeys[i]);
+        const nativePrice = priceMap.get(chain.coinpaprikaNativeId) ?? null;
+        chains.push(formatChainBalance(bal.balances, bal.address, chain, nativePrice));
+      }
+
+      return { name: w.name, chains };
+    })
+  );
+
+  return { wallets };
 }
 
 export async function walletExportKeyCommand(walletId: string, yes = false, dangerExport = false): Promise<{
   name: string;
   address: string;
-  private_key: string;
+  key_type: string;
+  private_key?: string;
+  mnemonic?: string;
   warning: string;
 }> {
   assertInitialized();
@@ -188,6 +366,28 @@ export async function walletExportKeyCommand(walletId: string, yes = false, dang
     throw new AppError('ERR_AUTH_FAILED', 'Invalid master password');
   }
 
+  const keyType = wallet.key_type ?? 'legacy';
+
+  if (keyType === 'hd' && wallet.encrypted_mnemonic) {
+    // HD wallet — export mnemonic (controls all chains)
+    let mnemonicBuf: Buffer | null = null;
+    try {
+      mnemonicBuf = decryptSecretAsBuffer(wallet.encrypted_mnemonic, password);
+      const mnemonic = mnemonicBuf.toString('utf8');
+      logAudit({ wallet_id: walletId, action: 'wallet.export_key', request: { walletId, key_type: 'hd' }, decision: 'ok' });
+      return {
+        name: wallet.name,
+        address: wallet.address,
+        key_type: 'hd',
+        mnemonic,
+        warning: 'Mnemonic controls ALL chains (EVM + Solana). Do not log or persist this value.'
+      };
+    } finally {
+      mnemonicBuf?.fill(0);
+    }
+  }
+
+  // Legacy wallet — export private key
   let pkBuf: Buffer | null = null;
   try {
     pkBuf = decryptSecretAsBuffer(wallet.encrypted_private_key, password);
@@ -196,6 +396,7 @@ export async function walletExportKeyCommand(walletId: string, yes = false, dang
     return {
       name: wallet.name,
       address: wallet.address,
+      key_type: 'legacy',
       private_key: privateKey,
       warning: 'Private key returned in response. Do not log or persist this value.'
     };

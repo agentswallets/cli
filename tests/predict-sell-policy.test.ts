@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppError } from '../src/core/errors.js';
 
+vi.mock('../src/core/settings.js', () => ({
+  getSetting: (key: string) => key === 'default_chain' ? 'polygon' : null,
+  setSetting: vi.fn()
+}));
+
 vi.mock('../src/core/db.js', () => ({
   assertInitialized: vi.fn(),
   getDb: vi.fn(() => {
@@ -25,6 +30,7 @@ vi.mock('../src/core/session.js', () => ({
 vi.mock('../src/util/idempotency.js', () => ({
   reserveIdempotencyKey: vi.fn(),
   getOperationByIdempotencyKey: vi.fn(() => null),
+  isStalePending: vi.fn(() => false),
   bindIdempotencyKeyRef: vi.fn()
 }));
 
@@ -42,6 +48,10 @@ vi.mock('../src/core/wallet-store.js', () => ({
     name: 'bot',
     address: '0x1111111111111111111111111111111111111111',
     encrypted_private_key: 'enc',
+    key_type: 'legacy' as const,
+    encrypted_mnemonic: null,
+    encrypted_solana_key: null,
+    solana_address: null,
     created_at: new Date().toISOString()
   }))
 }));

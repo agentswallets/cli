@@ -37,11 +37,12 @@ describe('idempotency key validation', () => {
     expect(() => reserveIdempotencyKey(longKey, 'tx_send')).toThrow(/1-256 chars/);
   });
 
-  it('accepts valid keys', async () => {
+  it('accepts valid keys including dots (e.g. drain USDC.e)', async () => {
     const { reserveIdempotencyKey } = await import('../src/util/idempotency.js');
     expect(() => reserveIdempotencyKey('valid-key_123', 'tx_send')).not.toThrow();
     expect(() => reserveIdempotencyKey('a', 'tx_send')).not.toThrow();
     expect(() => reserveIdempotencyKey('A'.repeat(256), 'tx_send')).not.toThrow();
+    expect(() => reserveIdempotencyKey('drain-abc-USDC.e', 'tx_send')).not.toThrow();
   });
 
   it('rejects keys with unicode characters', async () => {

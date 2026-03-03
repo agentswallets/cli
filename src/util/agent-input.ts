@@ -14,22 +14,30 @@ function hasArg(flag: string): boolean {
 }
 
 export function isNonInteractive(): boolean {
-  return hasArg('--non-interactive') || isTruthy(process.env.AW_NON_INTERACTIVE) || isTruthy(process.env.CI);
+  return hasArg('--non-interactive') || isTruthy(process.env.AW_NON_INTERACTIVE) || isTruthy(process.env.CI) || !process.stdin.isTTY;
 }
 
 let envPasswordWarned = false;
+/** Process-level cache: survives env var deletion so multi-step commands (e.g. drain) work. */
+let cachedEnvPassword: string | null = null;
+
+/** @internal Test-only: reset cached password between test runs. */
+export function _resetPasswordCache(): void { cachedEnvPassword = null; }
 
 function readPasswordFromEnv(): string | null {
+  if (cachedEnvPassword) return cachedEnvPassword;
+
   const direct = process.env.AW_MASTER_PASSWORD;
   if (direct && direct.trim()) {
     delete process.env.AW_MASTER_PASSWORD;
+    cachedEnvPassword = direct.trim();
     if (!envPasswordWarned) {
       envPasswordWarned = true;
       if (!wantsJsonOutput({ json: process.argv.includes('--json'), output: undefined })) {
         process.stderr.write('[warn] Using AW_MASTER_PASSWORD from environment. Prefer AW_MASTER_PASSWORD_ENV for indirection.\n');
       }
     }
-    return direct.trim();
+    return cachedEnvPassword;
   }
 
   const pointer = process.env.AW_MASTER_PASSWORD_ENV;

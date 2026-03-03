@@ -1,28 +1,34 @@
-let cachedPrice: { usd: number; ts: number } | null = null;
+const cache = new Map<string, { usd: number; ts: number }>();
 const CACHE_TTL = 60_000; // 1 minute
 
 /**
- * Fetch POL/USD price from CoinPaprika free API (no key required, 25k calls/month).
+ * Fetch native token USD price from CoinPaprika free API (no key required, 25k calls/month).
  * Returns null on any failure (network, rate-limit, etc.) — never throws.
  */
-export async function fetchPolUsdPrice(): Promise<number | null> {
-  if (cachedPrice && Date.now() - cachedPrice.ts < CACHE_TTL) {
-    return cachedPrice.usd;
+export async function fetchNativeTokenPrice(coinpaprikaId: string): Promise<number | null> {
+  const cached = cache.get(coinpaprikaId);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    return cached.usd;
   }
   try {
     const res = await fetch(
-      'https://api.coinpaprika.com/v1/tickers/pol-polygon-ecosystem-token',
+      `https://api.coinpaprika.com/v1/tickers/${coinpaprikaId}`,
       { signal: AbortSignal.timeout(5000) }
     );
-    if (!res.ok) return cachedPrice?.usd ?? null;
+    if (!res.ok) return cached?.usd ?? null;
     const data = await res.json() as { quotes?: { USD?: { price?: number } } };
     const usd = data?.quotes?.USD?.price;
     if (typeof usd === 'number') {
-      cachedPrice = { usd, ts: Date.now() };
+      cache.set(coinpaprikaId, { usd, ts: Date.now() });
       return usd;
     }
-    return cachedPrice?.usd ?? null;
+    return cached?.usd ?? null;
   } catch {
-    return cachedPrice?.usd ?? null;
+    return cached?.usd ?? null;
   }
+}
+
+/** Backward-compatible alias for POL/USD price. */
+export async function fetchPolUsdPrice(): Promise<number | null> {
+  return fetchNativeTokenPrice('pol-polygon-ecosystem-token');
 }

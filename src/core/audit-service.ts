@@ -20,6 +20,8 @@ export function logAudit(input: {
   decision: string;
   result?: unknown;
   error_code?: string;
+  chain_name?: string;
+  chain_id?: number;
 }): void {
   const db = getDb();
   const id = uuidv4();
@@ -45,8 +47,8 @@ export function logAudit(input: {
     const entryHash = sha256(`${prevHash}${id}${input.action}${requestJson}${input.decision}${now}`);
 
     db.prepare(
-      `INSERT INTO audit_logs(id,wallet_id,action,request_json,decision,result_json,error_code,prev_hash,entry_hash,wallet_address,home_dir,created_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO audit_logs(id,wallet_id,action,request_json,decision,result_json,error_code,prev_hash,entry_hash,wallet_address,home_dir,chain_name,chain_id,created_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       id,
       input.wallet_id ?? null,
@@ -59,6 +61,8 @@ export function logAudit(input: {
       entryHash,
       walletAddress,
       homeDir,
+      input.chain_name ?? null,
+      input.chain_id ?? null,
       now
     );
   })();

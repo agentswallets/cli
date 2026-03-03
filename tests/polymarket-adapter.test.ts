@@ -36,7 +36,7 @@ describe('CliPolymarketAdapter', () => {
     });
   });
 
-  it('returns ERR_RPC_UNAVAILABLE on timeout', async () => {
+  it('returns ERR_POLYMARKET_TIMEOUT on timeout', async () => {
     const spawnImpl = (() => makeChild()) as unknown as typeof import('node:child_process').spawn;
     const adapter = new CliPolymarketAdapter({
       timeoutMs: 10,
@@ -45,7 +45,7 @@ describe('CliPolymarketAdapter', () => {
     });
 
     await expect(adapter.searchMarkets({ query: 'trump', limit: 1 })).rejects.toMatchObject<AppError>({
-      code: 'ERR_RPC_UNAVAILABLE'
+      code: 'ERR_POLYMARKET_TIMEOUT'
     });
   });
 

@@ -1,4 +1,5 @@
 import { isAddress } from 'ethers';
+import { PublicKey } from '@solana/web3.js';
 import { z } from 'zod';
 import { AppError } from '../core/errors.js';
 
@@ -9,6 +10,23 @@ export function requireAddress(address: string): string {
     throw new AppError('ERR_INVALID_PARAMS', `Invalid address: ${address}`);
   }
   return address;
+}
+
+export function requireSolanaAddress(address: string): string {
+  try {
+    // PublicKey constructor validates base58 encoding + 32-byte length.
+    // Do NOT check isOnCurve — PDAs and program addresses are valid transfer targets.
+    new PublicKey(address);
+    return address;
+  } catch {
+    throw new AppError('ERR_INVALID_PARAMS', `Invalid Solana address: ${address}`);
+  }
+}
+
+/** Validate address for the given chain type. */
+export function requireChainAddress(address: string, chainType: 'evm' | 'solana'): string {
+  if (chainType === 'solana') return requireSolanaAddress(address);
+  return requireAddress(address);
 }
 
 export function requirePositiveNumber(input: unknown, field: string): number {

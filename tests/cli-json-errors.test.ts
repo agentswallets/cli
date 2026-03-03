@@ -37,6 +37,7 @@ describe('cli-like json errors', () => {
     await withHome(dir, async () => {
       initDbSchema();
       setSetting('initialized_at', new Date().toISOString());
+      setSetting('default_chain', 'polygon');
       const prevPath = process.env.PATH;
       process.env.PATH = '';
       try {

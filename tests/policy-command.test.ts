@@ -19,6 +19,10 @@ const getWalletByIdMock = vi.fn(() => ({
   name: 'bot',
   address: '0x1234',
   encrypted_private_key: 'enc',
+  key_type: 'legacy' as const,
+  encrypted_mnemonic: null,
+  encrypted_solana_key: null,
+  solana_address: null,
   created_at: '2025-01-01'
 }));
 
@@ -52,7 +56,9 @@ describe('policySetCommand', () => {
     vi.clearAllMocks();
     getWalletByIdMock.mockReturnValue({
       id: 'w_test', name: 'bot', address: '0x1234',
-      encrypted_private_key: 'enc', created_at: '2025-01-01'
+      encrypted_private_key: 'enc', key_type: 'legacy' as const,
+      encrypted_mnemonic: null, encrypted_solana_key: null, solana_address: null,
+      created_at: '2025-01-01'
     });
     getPolicyMock.mockReturnValue({ ...defaultPolicy });
   });
@@ -115,7 +121,9 @@ describe('policyShowCommand', () => {
     vi.clearAllMocks();
     getWalletByIdMock.mockReturnValue({
       id: 'w_test', name: 'bot', address: '0x1234',
-      encrypted_private_key: 'enc', created_at: '2025-01-01'
+      encrypted_private_key: 'enc', key_type: 'legacy' as const,
+      encrypted_mnemonic: null, encrypted_solana_key: null, solana_address: null,
+      created_at: '2025-01-01'
     });
     getPolicyMock.mockReturnValue({ ...defaultPolicy });
   });

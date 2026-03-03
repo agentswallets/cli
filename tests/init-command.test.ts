@@ -64,11 +64,13 @@ describe('initCommand', () => {
     isInitializedMock.mockReturnValue(false);
   });
 
-  it('initializes successfully and returns data_dir + chain_id', async () => {
+  it('initializes successfully and returns data_dir + chain + supported_chains', async () => {
     const result = await initCommand();
     expect(result.data_dir).toBe('/tmp/aw-test');
-    expect(result.chain).toBe('Polygon');
-    expect(result.chain_id).toBe(137);
+    expect(result.chain).toBe('Ethereum');
+    expect(result.supported_chains).toContain('Ethereum');
+    expect(result.supported_chains).toContain('Solana');
+    expect(result.supported_chains.length).toBe(6);
   });
 
   it('calls ensureDataDir and initDbSchema', async () => {
@@ -88,7 +90,7 @@ describe('initCommand', () => {
     expect(setSettingMock).toHaveBeenCalledWith('master_password_salt', 'test_salt');
     expect(setSettingMock).toHaveBeenCalledWith('master_password_verifier', 'test_verifier');
     expect(setSettingMock).toHaveBeenCalledWith('master_password_kdf_params', expect.any(String));
-    expect(setSettingMock).toHaveBeenCalledWith('chain_id', '137');
+    expect(setSettingMock).toHaveBeenCalledWith('chain_id', '1');
     expect(setSettingMock).toHaveBeenCalledWith('initialized_at', expect.any(String));
   });
 

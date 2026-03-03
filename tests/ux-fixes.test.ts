@@ -81,11 +81,11 @@ describe('Fix 2: alias labels', () => {
   });
 });
 
-// ===== Fix 3: POL token naming =====
-describe('Fix 3: POL token naming', () => {
-  it('DEFAULT_POLICY uses POL', async () => {
+// ===== Fix 3: Default token naming =====
+describe('Fix 3: Default token naming', () => {
+  it('DEFAULT_POLICY uses ETH (default chain is ethereum)', async () => {
     const { DEFAULT_POLICY } = await import('../src/core/constants.js');
-    expect(DEFAULT_POLICY.allowed_tokens).toContain('POL');
+    expect(DEFAULT_POLICY.allowed_tokens).toContain('ETH');
   });
 
   it('policy engine accepts POL directly', async () => {
@@ -292,7 +292,7 @@ describe('Fix 7: human-readable output', () => {
       policy: { allowed_tokens: ['POL', 'USDC'] }
     }));
     const output = String(writeSpy.mock.calls[0]?.[0] ?? '');
-    expect(output).toContain('policy.allowed_tokens: POL, USDC');
+    expect(output).toContain('policy.allowed_tokens: POL / USDC');
   });
 
   it('formatHuman shows (none) for empty arrays', async () => {

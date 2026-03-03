@@ -4,21 +4,27 @@ import { isSessionValid } from '../core/session.js';
 import { AppError } from '../core/errors.js';
 import { getPolicy, getWalletById } from '../core/wallet-store.js';
 import { createPendingProviderOperation, dailySpendStats, finalizeProviderOperation, preflightBalanceCheck } from '../core/tx-service.js';
-import { getOperationByIdempotencyKey, reserveIdempotencyKey } from '../util/idempotency.js';
+import { getOperationByIdempotencyKey, isStalePending, reserveIdempotencyKey } from '../util/idempotency.js';
 import { requirePositiveNumber, requirePositiveInt } from '../util/validate.js';
 import { getMasterPassword } from '../util/agent-input.js';
 import { decryptSecretAsBuffer } from '../core/crypto.js';
 import { logAudit } from '../core/audit-service.js';
 import { getPolymarketAdapter } from '../core/polymarket/factory.js';
+import type { ChainKey } from '../core/chains.js';
+
+/** Polymarket operates on Polygon — always use polygon chain regardless of default. */
+const POLY_CHAIN = 'polygon' as const;
 type PredictOrderResult = { tx_id: string; provider_order_id: string | undefined; provider_status: string; order?: unknown };
 
 export async function polySearchCommand(q: string, limit: number): Promise<{ markets: unknown }> {
   assertInitialized();
+
   if (!q) throw new AppError('ERR_INVALID_PARAMS', '--query is required');
   const adapter = getPolymarketAdapter();
   const result = await adapter.searchMarkets({ query: q, limit });
-  logAudit({ action: 'predict.markets', request: { q, limit }, decision: 'ok', result });
-  return { markets: result.data };
+  const markets = Array.isArray(result.data) ? result.data.slice(0, limit) : result.data;
+  logAudit({ action: 'predict.markets', request: { q, limit }, decision: 'ok', result: { data: markets } });
+  return { markets };
 }
 
 export async function polyBuyCommand(
@@ -26,6 +32,7 @@ export async function polyBuyCommand(
   opts: { market: string; outcome: string; size: string; price: string; idempotencyKey: string; dryRun?: boolean }
 ): Promise<PredictOrderResult | (PredictOrderResult & { dry_run: true })> {
   assertInitialized();
+
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
   const side = opts.outcome.toLowerCase();
   if (side !== 'yes' && side !== 'no') throw new AppError('ERR_INVALID_PARAMS', '--outcome must be yes|no');
@@ -51,20 +58,21 @@ export async function polyBuyCommand(
     reserveIdempotencyKey(opts.idempotencyKey, 'predict_buy');
     const existing = getOperationByIdempotencyKey(opts.idempotencyKey);
     if (existing) {
-      if (existing.status !== 'failed' && existing.status !== 'pending') {
+      if (existing.status === 'failed' || isStalePending(existing)) {
+        db.prepare('DELETE FROM operations WHERE tx_id=?').run(existing.tx_id);
+        db.prepare('DELETE FROM idempotency_keys WHERE key=?').run(opts.idempotencyKey);
+        reserveIdempotencyKey(opts.idempotencyKey, 'predict_buy');
+      } else {
         let meta: Record<string, unknown> = {};
         try { meta = JSON.parse(existing.meta_json ?? '{}'); } catch { /* corrupt metadata */ }
         return {
           type: 'replay' as const,
           tx_id: existing.tx_id,
           provider_order_id: existing.provider_order_id ?? undefined,
-          provider_status: existing.status ?? 'submitted',
+          provider_status: existing.status ?? 'pending',
           order: meta,
         };
       }
-      db.prepare('DELETE FROM operations WHERE tx_id=?').run(existing.tx_id);
-      db.prepare('DELETE FROM idempotency_keys WHERE key=?').run(opts.idempotencyKey);
-      reserveIdempotencyKey(opts.idempotencyKey, 'predict_buy');
     }
     const stats = dailySpendStats(walletId, 'USDC');
     const decision = evaluatePolicy({ policy, token: 'USDC', amount, stats });
@@ -74,7 +82,9 @@ export async function polyBuyCommand(
         action: 'predict.buy',
         request: { walletId, ...opts },
         decision: 'denied',
-        error_code: decision.code
+        error_code: decision.code,
+        chain_name: 'Polygon',
+        chain_id: 137
       });
       throw new AppError(decision.code, decision.message, decision.details);
     }
@@ -86,7 +96,9 @@ export async function polyBuyCommand(
         token: 'USDC',
         amount: String(amount),
         idempotency_key: opts.idempotencyKey,
-        meta: { market: opts.market, outcome: side, size, price }
+        meta: { market: opts.market, outcome: side, size, price },
+        chain_name: 'Polygon',
+        chain_id: 137
       })
     };
   }).immediate();
@@ -97,7 +109,7 @@ export async function polyBuyCommand(
   const txId = atomicResult.txId;
 
   // Preflight: verify USDC.e (bridged) balance — Polymarket uses USDC.e, not native USDC
-  await preflightBalanceCheck(walletId, 'USDC.e', amount);
+  await preflightBalanceCheck(walletId, 'USDC.e', amount, POLY_CHAIN);
 
   const wallet = getWalletById(walletId);
   const password = await getMasterPassword('Master password for polymarket signing: ');
@@ -145,6 +157,7 @@ export async function polySellCommand(
   opts: { position: string; size: string; idempotencyKey: string; dryRun?: boolean }
 ): Promise<PredictOrderResult | (PredictOrderResult & { dry_run: true })> {
   assertInitialized();
+
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
   const size = requirePositiveNumber(opts.size, 'size');
 
@@ -166,20 +179,21 @@ export async function polySellCommand(
     reserveIdempotencyKey(opts.idempotencyKey, 'predict_sell');
     const existing = getOperationByIdempotencyKey(opts.idempotencyKey);
     if (existing) {
-      if (existing.status !== 'failed' && existing.status !== 'pending') {
+      if (existing.status === 'failed' || isStalePending(existing)) {
+        db.prepare('DELETE FROM operations WHERE tx_id=?').run(existing.tx_id);
+        db.prepare('DELETE FROM idempotency_keys WHERE key=?').run(opts.idempotencyKey);
+        reserveIdempotencyKey(opts.idempotencyKey, 'predict_sell');
+      } else {
         let meta: Record<string, unknown> = {};
         try { meta = JSON.parse(existing.meta_json ?? '{}'); } catch { /* corrupt metadata */ }
         return {
           type: 'replay' as const,
           tx_id: existing.tx_id,
           provider_order_id: existing.provider_order_id ?? undefined,
-          provider_status: existing.status ?? 'submitted',
+          provider_status: existing.status ?? 'pending',
           order: meta,
         };
       }
-      db.prepare('DELETE FROM operations WHERE tx_id=?').run(existing.tx_id);
-      db.prepare('DELETE FROM idempotency_keys WHERE key=?').run(opts.idempotencyKey);
-      reserveIdempotencyKey(opts.idempotencyKey, 'predict_sell');
     }
     const stats = dailySpendStats(walletId, 'USDC');
     const decision = evaluatePolicy({ policy, token: 'USDC', amount: size, stats, skipSpendLimits: true });
@@ -189,7 +203,9 @@ export async function polySellCommand(
         action: 'predict.sell',
         request: { walletId, ...opts },
         decision: 'denied',
-        error_code: decision.code
+        error_code: decision.code,
+        chain_name: 'Polygon',
+        chain_id: 137
       });
       throw new AppError(decision.code, decision.message, decision.details);
     }
@@ -201,7 +217,9 @@ export async function polySellCommand(
         token: 'USDC',
         amount: String(size),
         idempotency_key: opts.idempotencyKey,
-        meta: { position_id: opts.position, size }
+        meta: { position_id: opts.position, size },
+        chain_name: 'Polygon',
+        chain_id: 137
       })
     };
   }).immediate();

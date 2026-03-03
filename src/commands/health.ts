@@ -1,7 +1,9 @@
 import { isInitialized } from '../core/db.js';
 import { isSessionValid } from '../core/session.js';
 import { getProvider } from '../core/rpc.js';
-import { CHAIN_ID, CHAIN_NAME, DEFAULT_RPC_URL } from '../core/constants.js';
+import { getChain, getDefaultChainKey, isSolanaChain, resolveChainKey } from '../core/chains.js';
+import type { ChainKey } from '../core/chains.js';
+import { getSolanaConnection } from '../core/solana-provider.js';
 import { CLI_VERSION } from '../core/version.js';
 import { redactUrl, safeSummary } from '../util/redact.js';
 import { getHomeDir } from '../core/config.js';
@@ -10,26 +12,34 @@ type HealthStatus = {
   ok: boolean;
   version: string;
   chain: string;
-  chain_id: number;
+  default_chain: string;
   home_dir: string;
   db: { ok: boolean; error?: string };
   session: { ok: boolean };
-  rpc: { ok: boolean; url: string; chain_id?: number; error?: string };
+  rpc: { ok: boolean; url: string; error?: string };
   polymarket_cli: { ok: boolean; error?: string };
+  solana: { supported: true; rpc_url: string };
 };
 
-export async function healthCommand(): Promise<HealthStatus> {
-  const rawUrl = process.env.AW_RPC_URL || DEFAULT_RPC_URL;
+export async function healthCommand(chainOpt?: string): Promise<HealthStatus> {
+  const chainKey: ChainKey = chainOpt ? resolveChainKey(chainOpt) : getDefaultChainKey();
+  const chain = getChain(chainKey);
+  const rawUrl = process.env[chain.rpcEnvVar] || process.env.AW_RPC_URL || chain.defaultRpcUrls;
+
+  const solanaChain = getChain('solana');
+  const solanaRpcUrl = process.env[solanaChain.rpcEnvVar] || solanaChain.defaultRpcUrls;
+
   const result: HealthStatus = {
     ok: false,
     version: CLI_VERSION,
-    chain: CHAIN_NAME,
-    chain_id: CHAIN_ID,
+    chain: chain.name,
+    default_chain: chainKey,
     home_dir: getHomeDir(),
     db: { ok: false },
     session: { ok: false },
     rpc: { ok: false, url: redactUrl(rawUrl) },
-    polymarket_cli: { ok: false }
+    polymarket_cli: { ok: false },
+    solana: { supported: true, rpc_url: redactUrl(solanaRpcUrl) },
   };
 
   // Check DB
@@ -47,15 +57,20 @@ export async function healthCommand(): Promise<HealthStatus> {
     result.session.ok = false;
   }
 
-  // Check RPC
+  // Check RPC — Solana uses its own Connection, EVM uses ethers provider
   try {
-    const provider = getProvider();
-    const network = await provider.getNetwork();
-    const chainId = Number(network.chainId);
-    result.rpc.ok = chainId === CHAIN_ID;
-    result.rpc.chain_id = chainId;
-    if (chainId !== CHAIN_ID) {
-      result.rpc.error = `chain_id mismatch: expected ${CHAIN_ID}, got ${chainId}`;
+    if (isSolanaChain(chainKey)) {
+      const conn = getSolanaConnection();
+      await conn.getLatestBlockhash();
+      result.rpc.ok = true;
+    } else {
+      const provider = getProvider(chainKey);
+      const network = await provider.getNetwork();
+      const chainId = Number(network.chainId);
+      result.rpc.ok = chainId === chain.chainId;
+      if (chainId !== chain.chainId) {
+        result.rpc.error = `Chain mismatch: expected ${chain.name} (${chain.chainId}), got chain_id ${chainId}`;
+      }
     }
   } catch (err) {
     result.rpc.error = safeSummary(err instanceof Error ? err.message : String(err));

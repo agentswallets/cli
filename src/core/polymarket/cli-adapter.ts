@@ -436,7 +436,7 @@ export class CliPolymarketAdapter implements PolymarketAdapter {
           try { child.kill('SIGKILL'); } catch { /* already exited */ }
         }, 2000);
         reject(
-          new AppError('ERR_RPC_UNAVAILABLE', `polymarket command timeout after ${effectiveTimeout}ms`, {
+          new AppError('ERR_POLYMARKET_TIMEOUT', `polymarket command timeout after ${effectiveTimeout}ms`, {
             args
           })
         );

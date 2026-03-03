@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// Mock wallet-store
+// Mock wallet-store (legacy wallet)
 vi.mock('../src/core/wallet-store.js', () => ({
   getWalletById: (id: string) => ({
     id,
     name: 'test',
     address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     encrypted_private_key: '{}',
+    key_type: 'legacy' as const,
+    encrypted_mnemonic: null,
+    encrypted_solana_key: null,
+    solana_address: null,
     created_at: new Date().toISOString()
   })
 }));
@@ -15,6 +19,7 @@ vi.mock('../src/core/wallet-store.js', () => ({
 let mockPolBalanceWei = BigInt(1e18); // 1 POL
 let mockUsdcBalance6 = BigInt(100e6); // 100 USDC
 let mockUsdcBridgedBalance6 = BigInt(50e6); // 50 USDC.e
+let mockUsdtBalance6 = BigInt(0); // 0 USDT
 
 vi.mock('../src/core/rpc.js', () => ({
   getProvider: () => ({
@@ -29,8 +34,9 @@ vi.mock('ethers', () => {
   return {
     Contract: class {
       balanceOf = vi.fn().mockImplementation(() => {
-        // First Contract instance = native USDC, second = bridged USDC
-        const result = callCount % 2 === 0 ? mockUsdcBalance6 : mockUsdcBridgedBalance6;
+        // Polygon tokens: USDC (0), USDC.e (1), USDT (2)
+        const balances = [mockUsdcBalance6, mockUsdcBridgedBalance6, mockUsdtBalance6];
+        const result = balances[callCount % 3];
         callCount++;
         return Promise.resolve(result);
       });
@@ -47,14 +53,14 @@ describe('preflightBalanceCheck', () => {
   it('passes when POL balance is sufficient', async () => {
     mockPolBalanceWei = BigInt(2e18); // 2 POL
     const { preflightBalanceCheck } = await import('../src/core/tx-service.js');
-    await expect(preflightBalanceCheck('w1', 'POL', 1.0)).resolves.toBeUndefined();
+    await expect(preflightBalanceCheck('w1', 'POL', 1.0, 'polygon')).resolves.toBeUndefined();
   });
 
   it('throws when POL balance is insufficient', async () => {
     mockPolBalanceWei = BigInt(5e15); // 0.005 POL
     vi.resetModules();
     const { preflightBalanceCheck } = await import('../src/core/tx-service.js');
-    await expect(preflightBalanceCheck('w1', 'POL', 1.0)).rejects.toThrow(/Insufficient POL/);
+    await expect(preflightBalanceCheck('w1', 'POL', 1.0, 'polygon')).rejects.toThrow(/Insufficient POL/);
   });
 
   it('passes when USDC balance is sufficient and has gas', async () => {
@@ -62,7 +68,7 @@ describe('preflightBalanceCheck', () => {
     mockUsdcBalance6 = BigInt(50e6); // 50 USDC
     vi.resetModules();
     const { preflightBalanceCheck } = await import('../src/core/tx-service.js');
-    await expect(preflightBalanceCheck('w1', 'USDC', 25)).resolves.toBeUndefined();
+    await expect(preflightBalanceCheck('w1', 'USDC', 25, 'polygon')).resolves.toBeUndefined();
   });
 
   it('throws when USDC balance is insufficient', async () => {
@@ -70,7 +76,7 @@ describe('preflightBalanceCheck', () => {
     mockUsdcBalance6 = BigInt(5e6); // 5 USDC
     vi.resetModules();
     const { preflightBalanceCheck } = await import('../src/core/tx-service.js');
-    await expect(preflightBalanceCheck('w1', 'USDC', 10)).rejects.toThrow(/Insufficient USDC/);
+    await expect(preflightBalanceCheck('w1', 'USDC', 10, 'polygon')).rejects.toThrow(/Insufficient USDC/);
   });
 
   it('throws when USDC send lacks gas (POL too low)', async () => {
@@ -78,7 +84,7 @@ describe('preflightBalanceCheck', () => {
     mockUsdcBalance6 = BigInt(100e6); // 100 USDC
     vi.resetModules();
     const { preflightBalanceCheck } = await import('../src/core/tx-service.js');
-    await expect(preflightBalanceCheck('w1', 'USDC', 10)).rejects.toThrow(/Insufficient POL for gas/);
+    await expect(preflightBalanceCheck('w1', 'USDC', 10, 'polygon')).rejects.toThrow(/Insufficient POL for gas/);
   });
 
   it('accounts for gas in POL native transfer', async () => {
@@ -86,7 +92,7 @@ describe('preflightBalanceCheck', () => {
     mockPolBalanceWei = BigInt(1e18); // 1.0 POL
     vi.resetModules();
     const { preflightBalanceCheck } = await import('../src/core/tx-service.js');
-    await expect(preflightBalanceCheck('w1', 'POL', 1.0)).rejects.toThrow(/Insufficient POL/);
+    await expect(preflightBalanceCheck('w1', 'POL', 1.0, 'polygon')).rejects.toThrow(/Insufficient POL/);
   });
 
   it('passes when USDC.e balance is sufficient', async () => {
@@ -94,7 +100,7 @@ describe('preflightBalanceCheck', () => {
     mockUsdcBridgedBalance6 = BigInt(100e6); // 100 USDC.e
     vi.resetModules();
     const { preflightBalanceCheck } = await import('../src/core/tx-service.js');
-    await expect(preflightBalanceCheck('w1', 'USDC.e', 50)).resolves.toBeUndefined();
+    await expect(preflightBalanceCheck('w1', 'USDC.e', 50, 'polygon')).resolves.toBeUndefined();
   });
 
   it('throws when USDC.e balance is insufficient', async () => {
@@ -102,6 +108,6 @@ describe('preflightBalanceCheck', () => {
     mockUsdcBridgedBalance6 = BigInt(5e6); // 5 USDC.e
     vi.resetModules();
     const { preflightBalanceCheck } = await import('../src/core/tx-service.js');
-    await expect(preflightBalanceCheck('w1', 'USDC.e', 10)).rejects.toThrow(/Insufficient USDC\.e/);
+    await expect(preflightBalanceCheck('w1', 'USDC.e', 10, 'polygon')).rejects.toThrow(/Insufficient USDC\.e/);
   });
 });

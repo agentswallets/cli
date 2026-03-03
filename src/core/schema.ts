@@ -4,6 +4,10 @@ CREATE TABLE IF NOT EXISTS wallets (
   name TEXT NOT NULL UNIQUE,
   address TEXT NOT NULL UNIQUE,
   encrypted_private_key TEXT NOT NULL,
+  key_type TEXT DEFAULT 'legacy',
+  encrypted_mnemonic TEXT,
+  encrypted_solana_key TEXT,
+  solana_address TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -42,6 +46,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   entry_hash TEXT,
   wallet_address TEXT,
   home_dir TEXT,
+  chain_name TEXT,
+  chain_id INTEGER,
   created_at TEXT NOT NULL
 );
 
@@ -70,6 +76,8 @@ CREATE TABLE IF NOT EXISTS operations (
   provider_order_id TEXT,
   idempotency_key TEXT UNIQUE,
   meta_json TEXT,
+  chain_name TEXT,
+  chain_id INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY(wallet_id) REFERENCES wallets(id)

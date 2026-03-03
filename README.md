@@ -1,11 +1,23 @@
 # AgentsWallets CLI
 
-Secure local wallet CLI for AI agents on Polygon.
+Secure local wallet CLI for AI agents. Multi-chain EVM + Solana.
 
 - Private keys never leave the local machine (AES-256-GCM encrypted at rest)
+- HD wallet: one mnemonic, EVM + Solana addresses
 - Policy engine enforces per-tx limits, daily limits, token allowlists
 - All output is structured JSON for agent consumption
 - Polymarket prediction market integration built-in
+
+## Supported chains
+
+| Chain | Native token | Stablecoins | Chain ID |
+|-------|-------------|-------------|----------|
+| Ethereum | ETH | USDC, USDT | 1 |
+| BNB Chain | BNB | USDC, USDT | 56 |
+| Base | ETH | USDC | 8453 |
+| Polygon | POL | USDC, USDC.e, USDT | 137 |
+| Arbitrum | ETH | USDC, USDT | 42161 |
+| Solana | SOL | USDC, USDT | — |
 
 ## Install
 
@@ -21,8 +33,9 @@ Requires Node.js >= 20.
 aw init
 aw unlock
 aw wallet create --name alice
-aw wallet balance --wallet alice
-aw send --wallet alice --to 0x... --amount 1 --token USDC
+aw wallet balance --wallet alice                    # All chains
+aw wallet balance --wallet alice --chain ethereum   # Single chain
+aw send --wallet alice --to 0x... --amount 1 --token USDC --chain ethereum
 ```
 
 ## Agent mode
@@ -34,12 +47,12 @@ export AW_MASTER_PASSWORD='your-password'
 
 aw unlock --json
 aw wallet list --json
-aw send --wallet alice --to 0x... --amount 1 --token USDC --json
+aw send --wallet alice --to 0x... --amount 1 --token USDC --chain base --json
 ```
 
 - `AW_NON_INTERACTIVE=1` — disable interactive prompts
 - `AW_JSON=1` — force structured JSON output
-- `AW_MASTER_PASSWORD` — provide password without prompt (cleared after read)
+- `AW_MASTER_PASSWORD` — provide password without prompt (cached in-process, cleared from env after first read)
 - `AW_MASTER_PASSWORD_ENV` — safer alternative: name of env var holding the password (e.g. `MY_SECRET`)
 
 ## Commands
@@ -51,20 +64,23 @@ aw init                              # Initialize data store
 aw unlock                            # Start authenticated session
 aw unlock --single                   # Single-op session (auto-locks after one write)
 aw lock                              # End session
-aw health                            # Check system status (includes home_dir)
+aw health                            # Check system status (default chain)
+aw health --chain solana             # Check Solana RPC connectivity
 ```
 
 ### Wallet
 
 ```bash
-aw wallet create --name <name>       # Create new wallet
+aw wallet create --name <name>       # Create HD wallet (EVM + Solana)
 aw wallet list                       # List all wallets
-aw wallet info --wallet <name>       # Wallet details
-aw wallet balance --wallet <name>    # Check balances (POL, USDC, USDC.e)
-aw wallet balance --all              # All wallets at once
-aw wallet deposit-address --wallet <name>  # Get deposit address
-aw wallet drain --wallet <name> --to 0x...          # Drain all tokens to address
-aw wallet drain --wallet <name> --to 0x... --dry-run  # Preview drain plan
+aw wallet info --wallet <name>       # Wallet details (addresses for all chains)
+aw wallet balance --wallet <name>                   # All chains
+aw wallet balance --wallet <name> --chain ethereum  # Single chain
+aw wallet balance --all                             # All wallets, all chains
+aw wallet deposit-address --wallet <name>                  # EVM address
+aw wallet deposit-address --wallet <name> --chain solana   # Solana address
+aw wallet drain --wallet <name> --to 0x... --chain polygon          # Drain all tokens
+aw wallet drain --wallet <name> --to 0x... --chain polygon --dry-run  # Preview
 ```
 
 ### Transfers
@@ -75,8 +91,11 @@ aw send \
   --to 0x... \
   --amount 10 \
   --token USDC \
+  --chain ethereum \
   --dry-run                          # Validate without sending
 ```
+
+The `--chain` flag accepts names (`ethereum`, `base`, `solana`), aliases (`eth`, `bsc`, `arb`, `sol`), or chain IDs (`1`, `137`, `8453`).
 
 Idempotency keys are auto-generated. Pass `--idempotency-key <key>` for explicit retry safety.
 
@@ -88,13 +107,14 @@ aw policy set --wallet alice \
   --limit-daily 500 \
   --limit-per-tx 100 \
   --max-tx-per-day 20 \
-  --allowed-tokens POL,USDC,USDC.e \
-  --allowed-addresses 0x...,0x...
+  --allowed-tokens ETH,USDC \
+  --allowed-addresses 0x...,0x... \
+  --require-approval-above 200
 ```
 
 ### Prediction markets (Polymarket)
 
-Requires [polymarket-cli](https://github.com/Polymarket/cli) installed separately.
+Prediction commands operate on Polygon only. Requires [polymarket-cli](https://github.com/Polymarket/cli) installed separately.
 
 ```bash
 aw predict markets -q "bitcoin" --limit 10
@@ -136,7 +156,7 @@ aw keychain remove                   # Remove from keychain
 
 ## JSON contract
 
-All commands output a consistent JSON envelope:
+All `--json` output goes to **stdout** (both success and error). stderr is reserved for human-readable warnings only.
 
 **Success:**
 ```json
@@ -178,9 +198,14 @@ All commands output a consistent JSON envelope:
 |----------|-------------|
 | `AW_JSON` | Force JSON output (`1`) |
 | `AW_NON_INTERACTIVE` | Disable prompts (`1`) |
-| `AW_MASTER_PASSWORD` | Master password for non-interactive unlock (cleared after read) |
+| `AW_MASTER_PASSWORD` | Master password (cached in-process, cleared from env after first read) |
 | `AW_MASTER_PASSWORD_ENV` | Name of env var holding the password (safer indirection) |
-| `AW_RPC_URL` | Custom Polygon RPC URL(s), comma-separated |
+| `AW_RPC_URL_ETHEREUM` | Custom Ethereum RPC URL(s), comma-separated |
+| `AW_RPC_URL_BNB` | Custom BNB Chain RPC URL(s) |
+| `AW_RPC_URL_BASE` | Custom Base RPC URL(s) |
+| `AW_RPC_URL_POLYGON` | Custom Polygon RPC URL(s) |
+| `AW_RPC_URL_ARBITRUM` | Custom Arbitrum RPC URL(s) |
+| `AW_RPC_URL_SOLANA` | Custom Solana RPC URL |
 | `AW_SESSION_TTL_MINUTES` | Session timeout (default: 15, max: 15) |
 | `AW_ALLOW_EXPORT` | Enable `wallet export-key` (`1`) |
 | `AGENTSWALLETS_HOME` | Custom data directory (default: `~/.agentswallets`) |
@@ -188,7 +213,8 @@ All commands output a consistent JSON envelope:
 ## Security
 
 - Master password is verified via scrypt-derived key
-- Private keys are AES-256-GCM encrypted, never exposed in CLI output
+- HD wallet: BIP-39 mnemonic encrypted with AES-256-GCM, never exposed in CLI output
+- EVM keys derived via m/44'/60'/0'/0/0, Solana via m/44'/501'/0'/0'
 - Session tokens are time-limited with automatic sliding-window renewal
 - Policy engine runs pre-flight checks before every transaction
 - All sensitive operations are recorded in the audit log

@@ -87,13 +87,18 @@ vi.mock('../src/core/wallet-store.js', () => ({
     name: 'bot',
     address: '0x1111111111111111111111111111111111111111',
     encrypted_private_key: 'enc',
+    key_type: 'legacy' as const,
+    encrypted_mnemonic: null,
+    encrypted_solana_key: null,
+    solana_address: null,
     created_at: new Date().toISOString()
   }))
 }));
 
 vi.mock('../src/util/idempotency.js', () => ({
   reserveIdempotencyKey: vi.fn(),
-  getOperationByIdempotencyKey: vi.fn(() => null)
+  getOperationByIdempotencyKey: vi.fn(() => null),
+  isStalePending: vi.fn(() => false)
 }));
 
 vi.mock('../src/util/agent-input.js', () => ({
@@ -201,11 +206,11 @@ describe('P0: concurrent spend limit enforcement', () => {
       idempotencyKey: 'k_token_1'
     });
 
-    // $400 POL — should pass (independent daily limit, different token)
+    // $400 ETH — should pass (independent daily limit, different token)
     const result = await txSendCommand('w1', {
       to: '0x2222222222222222222222222222222222222222',
       amount: '400',
-      token: 'POL',
+      token: 'ETH',
       idempotencyKey: 'k_token_2'
     });
     expect(result.status).toBeDefined();

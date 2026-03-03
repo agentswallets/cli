@@ -13,7 +13,7 @@ vi.mock('../src/core/session.js', () => ({
 
 vi.mock('../src/core/rpc.js', () => ({
   getProvider: () => ({
-    getNetwork: async () => ({ chainId: 137n })
+    getNetwork: async () => ({ chainId: 1n })
   })
 }));
 
@@ -33,7 +33,6 @@ describe('health command', () => {
     const result = await healthCommand();
     expect(result).toHaveProperty('ok');
     expect(result).toHaveProperty('version');
-    expect(result).toHaveProperty('chain_id', 137);
     expect(result).toHaveProperty('db');
     expect(result).toHaveProperty('session');
     expect(result).toHaveProperty('rpc');
@@ -204,6 +203,68 @@ describe('health command', () => {
     expect(result).toHaveProperty('home_dir');
     expect(typeof result.home_dir).toBe('string');
     expect(result.home_dir.length).toBeGreaterThan(0);
+  });
+
+  it('health works with --chain solana (Solana RPC)', async () => {
+    vi.resetModules();
+    vi.doMock('../src/core/db.js', () => ({
+      getDb: () => ({}),
+      ensureDataDir: () => {},
+      isInitialized: () => true,
+      assertInitialized: () => {}
+    }));
+    vi.doMock('../src/core/session.js', () => ({ isSessionValid: () => false }));
+    vi.doMock('../src/core/solana-provider.js', () => ({
+      getSolanaConnection: () => ({
+        getLatestBlockhash: async () => ({ blockhash: 'abc', lastValidBlockHeight: 100 })
+      })
+    }));
+    const { healthCommand } = await import('../src/commands/health.js');
+    const result = await healthCommand('solana');
+    expect(result.chain).toBe('Solana');
+    expect(result.rpc.ok).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  it('health reports Solana RPC failure', async () => {
+    vi.resetModules();
+    vi.doMock('../src/core/db.js', () => ({
+      getDb: () => ({}),
+      ensureDataDir: () => {},
+      isInitialized: () => true,
+      assertInitialized: () => {}
+    }));
+    vi.doMock('../src/core/session.js', () => ({ isSessionValid: () => false }));
+    vi.doMock('../src/core/solana-provider.js', () => ({
+      getSolanaConnection: () => ({
+        getLatestBlockhash: async () => { throw new Error('Solana RPC unavailable'); }
+      })
+    }));
+    const { healthCommand } = await import('../src/commands/health.js');
+    const result = await healthCommand('solana');
+    expect(result.chain).toBe('Solana');
+    expect(result.rpc.ok).toBe(false);
+    expect(result.rpc.error).toBeDefined();
+    expect(result.ok).toBe(false);
+  });
+
+  it('--chain flag overrides default chain', async () => {
+    vi.resetModules();
+    vi.doMock('../src/core/db.js', () => ({
+      getDb: () => ({}),
+      ensureDataDir: () => {},
+      isInitialized: () => true,
+      assertInitialized: () => {}
+    }));
+    vi.doMock('../src/core/session.js', () => ({ isSessionValid: () => false }));
+    vi.doMock('../src/core/rpc.js', () => ({
+      getProvider: () => ({ getNetwork: async () => ({ chainId: 137n }) })
+    }));
+    const { healthCommand } = await import('../src/commands/health.js');
+    const result = await healthCommand('polygon');
+    expect(result.chain).toBe('Polygon');
+    expect(result.default_chain).toBe('polygon');
+    expect(result.rpc.ok).toBe(true);
   });
 
   it('tries polymarket-cli before polymarket', async () => {

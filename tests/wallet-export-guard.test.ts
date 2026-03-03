@@ -22,6 +22,10 @@ vi.mock('../src/core/wallet-store.js', () => ({
     name: 'test',
     address: '0x1234',
     encrypted_private_key: 'enc',
+    key_type: 'legacy' as const,
+    encrypted_mnemonic: null,
+    encrypted_solana_key: null,
+    solana_address: null,
     created_at: '2025-01-01'
   }))
 }));

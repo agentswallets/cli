@@ -89,7 +89,7 @@ if (bareArgs.length === 0 && !process.argv.includes('--help') && !process.argv.i
       process.stdout.write([
         '',
         `  AgentsWallets v${CLI_VERSION}`,
-        '  Wallets for AI Agents \u00b7 Polygon',
+        '  Wallets for AI Agents \u00b7 Ethereum \u00b7 Base \u00b7 BNB \u00b7 Polygon \u00b7 Arbitrum',
         '',
         '  Get started:',
         '    aw init              Set up master password',

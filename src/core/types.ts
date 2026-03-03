@@ -35,6 +35,10 @@ export type WalletRow = {
   name: string;
   address: string;
   encrypted_private_key: string;
+  key_type: 'legacy' | 'hd';
+  encrypted_mnemonic: string | null;
+  encrypted_solana_key: string | null;
+  solana_address: string | null;
   created_at: string;
 };
 
@@ -70,6 +74,8 @@ export type OperationRow = {
   provider_order_id: string | null;
   idempotency_key: string | null;
   meta_json: string | null;
+  chain_name: string | null;
+  chain_id: number | null;
   created_at: string;
   updated_at: string;
 };

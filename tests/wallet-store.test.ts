@@ -24,12 +24,16 @@ describe('wallet-store', () => {
     memDb.close();
   });
 
-  it('insertWallet creates a wallet row', async () => {
+  it('insertWallet creates a legacy wallet row', async () => {
     const { insertWallet } = await import('../src/core/wallet-store.js');
     const row = insertWallet('bot1', '0xabc', '{"encrypted":"data"}');
     expect(row.id).toBeTruthy();
     expect(row.name).toBe('bot1');
     expect(row.address).toBe('0xabc');
+    expect(row.key_type).toBe('legacy');
+    expect(row.encrypted_mnemonic).toBeNull();
+    expect(row.encrypted_solana_key).toBeNull();
+    expect(row.solana_address).toBeNull();
     expect(row.created_at).toBeTruthy();
   });
 
@@ -103,7 +107,7 @@ describe('wallet-store', () => {
     expect(p.daily_limit).toBe(500);
     expect(p.per_tx_limit).toBe(100);
     expect(p.max_tx_per_day).toBe(20);
-    expect(p.allowed_tokens).toEqual(['POL', 'USDC', 'USDC.e']);
+    expect(p.allowed_tokens).toEqual(['ETH', 'USDC', 'USDT']);
     expect(p.allowed_addresses).toEqual([]);
   });
 
@@ -114,7 +118,7 @@ describe('wallet-store', () => {
     expect(p.per_tx_limit).toBe(100);
     expect(p.daily_limit).toBe(500);
     expect(p.max_tx_per_day).toBe(20);
-    expect(p.allowed_tokens).toEqual(['POL', 'USDC', 'USDC.e']);
+    expect(p.allowed_tokens).toEqual(['ETH', 'USDC', 'USDT']);
     expect(p.allowed_addresses).toEqual([]);
     expect(p.require_approval_above).toBeNull();
   });
@@ -161,14 +165,18 @@ describe('wallet-store', () => {
     expect(() => resolveWallet('unknown_wallet')).toThrow(/not found/);
   });
 
-  it('listWallets does not include id field', async () => {
+  it('listWallets does not include id field but includes key_type and solana_address', async () => {
     const { insertWallet, listWallets } = await import('../src/core/wallet-store.js');
     insertWallet('x', '0xx', '{}');
     const list = listWallets();
     expect(list[0]).toHaveProperty('name');
     expect(list[0]).toHaveProperty('address');
+    expect(list[0]).toHaveProperty('key_type');
+    expect(list[0]).toHaveProperty('solana_address');
     expect(list[0]).toHaveProperty('created_at');
     expect(list[0]).not.toHaveProperty('id');
+    expect(list[0].key_type).toBe('legacy');
+    expect(list[0].solana_address).toBeNull();
   });
 
   it('getWalletByName returns the wallet', async () => {
@@ -185,5 +193,62 @@ describe('wallet-store', () => {
     insertWallet('addrtest', addr, '{}');
     const w = getWalletByAddress(addr.toLowerCase());
     expect(w.name).toBe('addrtest');
+  });
+
+  it('insertWallet with HD fields stores all Solana data', async () => {
+    const { insertWallet, getWalletById } = await import('../src/core/wallet-store.js');
+    const row = insertWallet('hdwallet', '0xEVM', 'enc_evm', {
+      key_type: 'hd',
+      encrypted_mnemonic: 'enc_mnemonic',
+      encrypted_solana_key: 'enc_sol',
+      solana_address: 'SoLTestAddr123',
+    });
+    expect(row.key_type).toBe('hd');
+    expect(row.encrypted_mnemonic).toBe('enc_mnemonic');
+    expect(row.encrypted_solana_key).toBe('enc_sol');
+    expect(row.solana_address).toBe('SoLTestAddr123');
+
+    const fetched = getWalletById(row.id);
+    expect(fetched.key_type).toBe('hd');
+    expect(fetched.solana_address).toBe('SoLTestAddr123');
+    expect(fetched.encrypted_solana_key).toBe('enc_sol');
+    expect(fetched.encrypted_mnemonic).toBe('enc_mnemonic');
+  });
+
+  it('HD wallet default policy includes SOL token', async () => {
+    const { insertWallet, getPolicy } = await import('../src/core/wallet-store.js');
+    const w = insertWallet('hdpol', '0xHD', 'enc', {
+      key_type: 'hd',
+      encrypted_mnemonic: 'enc_mn',
+      encrypted_solana_key: 'enc_sk',
+      solana_address: 'SoLAddr',
+    });
+    const p = getPolicy(w.id);
+    expect(p.allowed_tokens).toContain('SOL');
+  });
+
+  it('legacy wallet default policy does NOT include SOL', async () => {
+    const { insertWallet, getPolicy } = await import('../src/core/wallet-store.js');
+    const w = insertWallet('legpol', '0xLEG', 'enc');
+    const p = getPolicy(w.id);
+    expect(p.allowed_tokens).not.toContain('SOL');
+  });
+
+  it('listWallets shows HD wallets with solana_address', async () => {
+    const { insertWallet, listWallets } = await import('../src/core/wallet-store.js');
+    insertWallet('leg', '0xleg', '{}');
+    insertWallet('hd', '0xhd', '{}', {
+      key_type: 'hd',
+      encrypted_mnemonic: 'em',
+      encrypted_solana_key: 'es',
+      solana_address: 'SolABC',
+    });
+    const list = listWallets();
+    const legWallet = list.find(w => w.name === 'leg')!;
+    const hdWallet = list.find(w => w.name === 'hd')!;
+    expect(legWallet.key_type).toBe('legacy');
+    expect(legWallet.solana_address).toBeNull();
+    expect(hdWallet.key_type).toBe('hd');
+    expect(hdWallet.solana_address).toBe('SolABC');
   });
 });

@@ -1,11 +1,13 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { initCommand } from './commands/init.js';
 import { unlockCommand } from './commands/unlock.js';
 import { runCommand, wantsJsonOutput } from './core/output.js';
 import crypto from 'node:crypto';
 import {
   walletAddressCommand,
+  walletBalanceAllChainsCommand,
   walletBalanceAllCommand,
+  walletBalanceAllWalletsAllChainsCommand,
   walletBalanceCommand,
   walletCreateCommand,
   walletExportKeyCommand,
@@ -51,7 +53,20 @@ function withCommon<T extends Command>(cmd: T): T {
     .option('--output <format>', 'Output format: human|json')
     .option('--non-interactive', 'Disable interactive prompts')
     .option('--request-id <id>', 'Request id for tracing')
-    .option('--timeout <ms>', 'RPC timeout in milliseconds (default: 30000)');
+    .option('--timeout <ms>', 'RPC timeout in milliseconds (default: 30000)')
+    .option('--chain <name>', 'Chain: ethereum|bnb|base|polygon|arbitrum|solana');
+}
+
+/** Like withCommon but without --chain (for predict commands hardcoded to Polygon).
+ *  Hidden --chain accepted for agent-wrapper compat but silently ignored. */
+function withCommonNoChain<T extends Command>(cmd: T): T {
+  return cmd
+    .option('--json', 'Output as JSON')
+    .option('--output <format>', 'Output format: human|json')
+    .option('--non-interactive', 'Disable interactive prompts')
+    .option('--request-id <id>', 'Request id for tracing')
+    .option('--timeout <ms>', 'RPC timeout in milliseconds (default: 30000)')
+    .addOption(new Option('--chain <name>').hideHelp());
 }
 
 export function buildCli(): Command {
@@ -75,7 +90,7 @@ export function buildCli(): Command {
     });
 
   withCommon(
-    program.command('init').description('Initialize local data store').addHelpText('after', '\nExample:\n  aw init --json\n').action((opts: CommonOpts) => runCommand(opts, () => initCommand()))
+    program.command('init').description('Initialize local data store').addHelpText('after', '\nExample:\n  aw init --json\n  aw init --chain ethereum --json\n').action((opts: CommonOpts & { chain?: string }) => runCommand(opts, () => initCommand({ chain: opts.chain })))
   );
 
   withCommon(
@@ -94,11 +109,14 @@ export function buildCli(): Command {
   );
   withCommon(wallet.command('list').description('List wallets').addHelpText('after', '\nExample:\n  aw wallet list --json\n').action((opts: CommonOpts) => runCommand(opts, () => walletListCommand())));
   withCommon(wallet.command('info [wallet]').description('Get wallet info').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet info alice --json\n  aw wallet info --wallet 0xCFEb...B0B --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => walletInfoCommand(resolveWalletArg(walletArg, opts.wallet)))));
-  withCommon(wallet.command('balance [wallet]').description('Get wallet balance').option('--wallet <wallet>', 'Wallet name or address').option('--all', 'Show all wallets').addHelpText('after', '\nExample:\n  aw wallet balance alice --json\n  aw wallet balance --wallet 0xCFEb...B0B --json\n  aw wallet balance --all --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; all?: boolean }) => {
-    if (opts.all) return runCommand(opts, () => walletBalanceAllCommand());
-    return runCommand(opts, () => walletBalanceCommand(resolveWalletArg(walletArg, opts.wallet)));
+  withCommon(wallet.command('balance [wallet]').description('Get wallet balance').option('--wallet <wallet>', 'Wallet name or address').option('--all', 'Show all wallets').addHelpText('after', '\nExample:\n  aw wallet balance alice --json\n  aw wallet balance --wallet 0xCFEb...B0B --json\n  aw wallet balance --all --json\n  aw wallet balance alice --chain ethereum --json\n  aw wallet balance alice --json              # all chains\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; all?: boolean; chain?: string }) => {
+    if (opts.all && opts.chain) return runCommand(opts, () => walletBalanceAllCommand(opts.chain));
+    if (opts.all) return runCommand(opts, () => walletBalanceAllWalletsAllChainsCommand());
+    const walletId = resolveWalletArg(walletArg, opts.wallet);
+    if (opts.chain) return runCommand(opts, () => walletBalanceCommand(walletId, opts.chain));
+    return runCommand(opts, () => walletBalanceAllChainsCommand(walletId));
   }));
-  withCommon(wallet.command('deposit-address [wallet]').description('Get wallet deposit address').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet deposit-address alice --json\n  aw wallet deposit-address --wallet 0xCFEb...B0B --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => walletAddressCommand(resolveWalletArg(walletArg, opts.wallet)))));
+  withCommon(wallet.command('deposit-address [wallet]').description('Get wallet deposit address').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet deposit-address alice --json\n  aw wallet deposit-address --wallet 0xCFEb...B0B --json\n  aw wallet deposit-address alice --chain solana --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; chain?: string }) => runCommand(opts, () => walletAddressCommand(resolveWalletArg(walletArg, opts.wallet), opts.chain))));
   withCommon(
     wallet
       .command('export-key [wallet]')
@@ -117,11 +135,11 @@ export function buildCli(): Command {
       .requiredOption('--to <address>', 'Destination address')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Preview drain plan without executing transfers')
-      .addHelpText('after', '\nExample:\n  aw wallet drain alice --to 0x742d... --json\n  aw wallet drain alice --to 0x742d... --dry-run --json\n  aw wallet drain --wallet alice --to 0x742d... --idempotency-key drain1 --json\n')
-      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; to: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
+      .addHelpText('after', '\nExample:\n  aw wallet drain alice --to 0x742d... --json\n  aw wallet drain alice --to 0x742d... --dry-run --json\n  aw wallet drain --wallet alice --to 0x742d... --idempotency-key drain1 --json\n  aw wallet drain alice --to 0x742d... --chain ethereum --json\n')
+      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; to: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string }) => {
         const walletId = resolveWalletArg(walletArg, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : undefined;
-        return runCommand({ ...opts, write: !opts.dryRun }, () => walletDrainCommand(walletId, { to: opts.to, idempotencyKey: idemKey, dryRun: opts.dryRun }));
+        return runCommand({ ...opts, write: !opts.dryRun }, () => walletDrainCommand(walletId, { to: opts.to, idempotencyKey: idemKey, dryRun: opts.dryRun, chain: opts.chain }));
       })
   );
   withCommon(wallet.command('settings [wallet]').description('Show wallet policy (alias for: aw policy show)').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet settings alice --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => policyShowCommand(resolveWalletArg(walletArg, opts.wallet)))));
@@ -161,14 +179,14 @@ export function buildCli(): Command {
       .requiredOption('--wallet <wallet>', 'Wallet name or address')
       .requiredOption('--to <address>', 'Destination address')
       .requiredOption('--amount <n>', 'Amount')
-      .requiredOption('--token <POL|USDC|USDC.e>', 'Token symbol')
+      .requiredOption('--token <symbol>', 'Token symbol (e.g. POL, ETH, USDC, USDT)')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Validate without broadcasting')
       .addHelpText(
         'after',
-        '\nUsage:\n  aw send --wallet alice --to <address> --amount <n> --token <symbol>\n\nExample:\n  aw send --wallet alice --to 0x742d... --amount 1 --token USDC --json\n  aw send --wallet alice --to 0x742d... --amount 1 --token USDC --idempotency-key s1 --json\n  aw send --wallet alice --to 0x742d... --amount 1 --token USDC --dry-run --json\n'
+        '\nUsage:\n  aw send --wallet alice --to <address> --amount <n> --token <symbol>\n\nExample:\n  aw send --wallet alice --to 0x742d... --amount 1 --token USDC --json\n  aw send --wallet alice --to 0x742d... --amount 1 --token USDC --idempotency-key s1 --json\n  aw send --wallet alice --to 0x742d... --amount 1 --token ETH --chain ethereum --json\n'
       )
-      .action((opts: CommonOpts & { wallet: string; to: string; amount: string; token: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
+      .action((opts: CommonOpts & { wallet: string; to: string; amount: string; token: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: true }, () =>
@@ -177,14 +195,15 @@ export function buildCli(): Command {
             amount: opts.amount,
             token: opts.token,
             idempotencyKey: idemKey,
-            dryRun: opts.dryRun
+            dryRun: opts.dryRun,
+            chain: opts.chain
           })
         );
       })
   );
 
   const predict = program.command('predict').description('Prediction market operations');
-  withCommon(
+  withCommonNoChain(
     predict
       .command('markets')
       .description('Search markets')
@@ -195,7 +214,7 @@ export function buildCli(): Command {
         runCommand(opts, () => polySearchCommand(opts.query, requirePositiveInt(opts.limit, 'limit')))
       )
   );
-  withCommon(
+  withCommonNoChain(
     predict
       .command('buy')
       .description('Buy market outcome')
@@ -222,7 +241,7 @@ export function buildCli(): Command {
         );
       })
   );
-  withCommon(
+  withCommonNoChain(
     predict
       .command('sell')
       .description('Sell existing position')
@@ -245,9 +264,9 @@ export function buildCli(): Command {
         );
       })
   );
-  withCommon(predict.command('positions').description('List positions').requiredOption('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw predict positions --wallet alice --json\n').action((opts: CommonOpts & { wallet: string }) => runCommand(opts, () => polyPositionsCommand(resolveWalletArg(undefined, opts.wallet)))));
-  withCommon(predict.command('orders').description('List orders').requiredOption('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw predict orders --wallet alice --json\n').action((opts: CommonOpts & { wallet: string }) => runCommand(opts, () => polyOrdersCommand(resolveWalletArg(undefined, opts.wallet)))));
-  withCommon(
+  withCommonNoChain(predict.command('positions').description('List positions').requiredOption('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw predict positions --wallet alice --json\n').action((opts: CommonOpts & { wallet: string }) => runCommand(opts, () => polyPositionsCommand(resolveWalletArg(undefined, opts.wallet)))));
+  withCommonNoChain(predict.command('orders').description('List orders').requiredOption('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw predict orders --wallet alice --json\n').action((opts: CommonOpts & { wallet: string }) => runCommand(opts, () => polyOrdersCommand(resolveWalletArg(undefined, opts.wallet)))));
+  withCommonNoChain(
     predict
       .command('cancel')
       .description('Cancel an open order')
@@ -258,7 +277,7 @@ export function buildCli(): Command {
         runCommand({ ...opts, write: true }, () => polyCancelCommand(resolveWalletArg(undefined, opts.wallet), opts.orderId))
       )
   );
-  withCommon(
+  withCommonNoChain(
     predict
       .command('approve-check')
       .description('Check contract approval status')
@@ -268,7 +287,7 @@ export function buildCli(): Command {
         runCommand(opts, () => polyApproveCheckCommand(resolveWalletArg(undefined, opts.wallet)))
       )
   );
-  withCommon(
+  withCommonNoChain(
     predict
       .command('approve-set')
       .description('Execute contract approvals (6 approval transactions)')
@@ -278,7 +297,7 @@ export function buildCli(): Command {
         runCommand({ ...opts, write: true }, () => polyApproveSetCommand(resolveWalletArg(undefined, opts.wallet)))
       )
   );
-  withCommon(
+  withCommonNoChain(
     predict
       .command('update-balance')
       .description('Refresh CLOB collateral balance cache')
@@ -288,7 +307,7 @@ export function buildCli(): Command {
         runCommand(opts, () => polyUpdateBalanceCommand(resolveWalletArg(undefined, opts.wallet)))
       )
   );
-  withCommon(
+  withCommonNoChain(
     predict
       .command('ctf-split')
       .description('Split USDC.e collateral into Yes+No outcome tokens')
@@ -300,7 +319,7 @@ export function buildCli(): Command {
         runCommand({ ...opts, write: true }, () => polyCtfSplitCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, amount: opts.amount }))
       )
   );
-  withCommon(
+  withCommonNoChain(
     predict
       .command('ctf-merge')
       .description('Merge Yes+No outcome tokens back into USDC.e collateral')
@@ -312,7 +331,7 @@ export function buildCli(): Command {
         runCommand({ ...opts, write: true }, () => polyCtfMergeCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, amount: opts.amount }))
       )
   );
-  withCommon(
+  withCommonNoChain(
     predict
       .command('ctf-redeem')
       .description('Redeem winning tokens after market resolution')
@@ -323,7 +342,7 @@ export function buildCli(): Command {
         runCommand({ ...opts, write: true }, () => polyCtfRedeemCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition }))
       )
   );
-  withCommon(
+  withCommonNoChain(
     predict
       .command('bridge-deposit')
       .description('Get deposit addresses for USDC → USDC.e bridging')
@@ -343,11 +362,11 @@ export function buildCli(): Command {
       .requiredOption('--wallet <wallet>', 'Wallet name or address')
       .requiredOption('--to <address>', 'Destination address')
       .requiredOption('--amount <n>', 'Amount')
-      .requiredOption('--token <POL|USDC|USDC.e>', 'Token symbol')
+      .requiredOption('--token <symbol>', 'Token symbol (e.g. POL, ETH, USDC, USDT)')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Validate without broadcasting')
       .addHelpText('after', '\nExample:\n  aw tx send --wallet alice --to 0x742d... --amount 1 --token USDC --json\n')
-      .action((opts: CommonOpts & { wallet: string; to: string; amount: string; token: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
+      .action((opts: CommonOpts & { wallet: string; to: string; amount: string; token: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: true }, () =>
@@ -356,7 +375,8 @@ export function buildCli(): Command {
             amount: opts.amount,
             token: opts.token,
             idempotencyKey: idemKey,
-            dryRun: opts.dryRun
+            dryRun: opts.dryRun,
+            chain: opts.chain
           })
         );
       })
@@ -408,9 +428,9 @@ export function buildCli(): Command {
   );
 
   withCommon(
-    program.command('health').description('Check system health (DB, RPC, session, polymarket CLI)').addHelpText('after', '\nExample:\n  aw health --json\n').action((opts: CommonOpts) =>
+    program.command('health').description('Check system health (DB, RPC, session, polymarket CLI)').addHelpText('after', '\nExample:\n  aw health --json\n  aw health --chain solana --json\n').action((opts: CommonOpts & { chain?: string }) =>
       runCommand(opts, async () => {
-        const result = await healthCommand();
+        const result = await healthCommand(opts.chain);
         if (!result.ok) {
           // Root-cause error classification — agents get actionable error codes
           let code: AppErrorCode = 'ERR_INTERNAL';
@@ -505,11 +525,11 @@ export function commandSchema(cmd: Command): object {
       default: a.defaultValue
     })),
     options: cmd.options
-      .filter(o => !['--json', '--output', '--non-interactive', '--request-id', '--timeout'].includes(o.long ?? ''))
+      .filter(o => !o.hidden && !['--json', '--output', '--non-interactive', '--request-id', '--timeout'].includes(o.long ?? ''))
       .map(o => ({
         flags: o.flags,
         description: o.description,
-        required: o.required,
+        required: o.mandatory ?? false,
         default: o.defaultValue
       })),
     subcommands: cmd.commands.length > 0

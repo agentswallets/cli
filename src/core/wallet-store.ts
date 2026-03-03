@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDb } from './db.js';
 import { DEFAULT_POLICY } from './constants.js';
+import { getChain, getDefaultChainKey } from './chains.js';
 import { AppError } from './errors.js';
 import type { PolicyConfig, PolicyRow, WalletRow } from './types.js';
 
@@ -8,7 +9,17 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-export function insertWallet(name: string, address: string, encryptedPrivateKey: string): WalletRow {
+export function insertWallet(
+  name: string,
+  address: string,
+  encryptedPrivateKey: string,
+  hdFields?: {
+    key_type: 'hd';
+    encrypted_mnemonic: string;
+    encrypted_solana_key: string;
+    solana_address: string;
+  }
+): WalletRow {
   const db = getDb();
   const existing = db.prepare('SELECT id FROM wallets WHERE name=?').get(name);
   if (existing) {
@@ -19,12 +30,24 @@ export function insertWallet(name: string, address: string, encryptedPrivateKey:
     name,
     address,
     encrypted_private_key: encryptedPrivateKey,
+    key_type: hdFields?.key_type ?? 'legacy',
+    encrypted_mnemonic: hdFields?.encrypted_mnemonic ?? null,
+    encrypted_solana_key: hdFields?.encrypted_solana_key ?? null,
+    solana_address: hdFields?.solana_address ?? null,
     created_at: nowIso()
   };
+  // Build allowed_tokens from current default chain's token list + SOL for HD wallets
+  const chain = getChain(getDefaultChainKey());
+  const defaultTokens = chain.tokens.map(t => t.symbol);
+  if (hdFields && !defaultTokens.includes('SOL')) {
+    defaultTokens.push('SOL');
+  }
+
   // Atomic: insert wallet + default policy in one transaction
   db.transaction(() => {
     db.prepare(
-      'INSERT INTO wallets(id,name,address,encrypted_private_key,created_at) VALUES(@id,@name,@address,@encrypted_private_key,@created_at)'
+      `INSERT INTO wallets(id,name,address,encrypted_private_key,key_type,encrypted_mnemonic,encrypted_solana_key,solana_address,created_at)
+       VALUES(@id,@name,@address,@encrypted_private_key,@key_type,@encrypted_mnemonic,@encrypted_solana_key,@solana_address,@created_at)`
     ).run(row);
     db.prepare(
       `INSERT INTO policies(wallet_id,daily_limit,per_tx_limit,max_tx_per_day,allowed_tokens_json,allowed_addresses_json,require_approval_above,updated_at)
@@ -34,7 +57,7 @@ export function insertWallet(name: string, address: string, encryptedPrivateKey:
       DEFAULT_POLICY.daily_limit,
       DEFAULT_POLICY.per_tx_limit,
       DEFAULT_POLICY.max_tx_per_day,
-      JSON.stringify(DEFAULT_POLICY.allowed_tokens),
+      JSON.stringify(defaultTokens),
       JSON.stringify(DEFAULT_POLICY.allowed_addresses),
       DEFAULT_POLICY.require_approval_above,
       row.created_at
@@ -80,19 +103,19 @@ export function resolveWallet(identifier: string): WalletRow {
   return getWalletByName(identifier);
 }
 
-export function listWallets(): Array<Pick<WalletRow, 'name' | 'address' | 'created_at'>> {
+export function listWallets(): Array<Pick<WalletRow, 'name' | 'address' | 'key_type' | 'solana_address' | 'created_at'>> {
   const db = getDb();
   return db
-    .prepare('SELECT name,address,created_at FROM wallets ORDER BY created_at DESC')
-    .all() as Array<Pick<WalletRow, 'name' | 'address' | 'created_at'>>;
+    .prepare('SELECT name,address,key_type,solana_address,created_at FROM wallets ORDER BY created_at DESC')
+    .all() as Array<Pick<WalletRow, 'name' | 'address' | 'key_type' | 'solana_address' | 'created_at'>>;
 }
 
-/** Internal: returns full wallet rows (including id) for batch operations. */
-export function listWalletsInternal(): Array<Pick<WalletRow, 'id' | 'name' | 'address' | 'created_at'>> {
+/** Internal: returns wallet rows (including id + solana_address) for batch operations. */
+export function listWalletsInternal(): Array<Pick<WalletRow, 'id' | 'name' | 'address' | 'solana_address' | 'created_at'>> {
   const db = getDb();
   return db
-    .prepare('SELECT id,name,address,created_at FROM wallets ORDER BY created_at DESC')
-    .all() as Array<Pick<WalletRow, 'id' | 'name' | 'address' | 'created_at'>>;
+    .prepare('SELECT id,name,address,solana_address,created_at FROM wallets ORDER BY created_at DESC')
+    .all() as Array<Pick<WalletRow, 'id' | 'name' | 'address' | 'solana_address' | 'created_at'>>;
 }
 
 export function upsertPolicy(walletId: string, policy: PolicyConfig): void {
@@ -126,12 +149,13 @@ export function getPolicy(walletId: string): PolicyConfig {
   const db = getDb();
   const row = db.prepare('SELECT * FROM policies WHERE wallet_id=?').get(walletId) as PolicyRow | undefined;
   if (!row) {
-    // Fail-safe: return default restrictive policy, not permissive all-null
+    // Fail-safe: return default restrictive policy, derive tokens from default chain
+    const chain = getChain(getDefaultChainKey());
     return {
       daily_limit: DEFAULT_POLICY.daily_limit,
       per_tx_limit: DEFAULT_POLICY.per_tx_limit,
       max_tx_per_day: DEFAULT_POLICY.max_tx_per_day,
-      allowed_tokens: [...DEFAULT_POLICY.allowed_tokens],
+      allowed_tokens: chain.tokens.map(t => t.symbol),
       allowed_addresses: [...DEFAULT_POLICY.allowed_addresses],
       require_approval_above: DEFAULT_POLICY.require_approval_above
     };

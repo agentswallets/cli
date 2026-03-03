@@ -1,6 +1,6 @@
 import { Contract, Wallet, formatEther, formatUnits, parseEther, parseUnits } from 'ethers';
 import { v4 as uuidv4 } from 'uuid';
-import { CHAIN_ID, GAS_ESTIMATE_ERC20_POL, GAS_ESTIMATE_NATIVE_POL, USDC_ADDRESS, USDC_LEGACY_ADDRESS } from './constants.js';
+import { type ChainKey, getChain, getDefaultChainKey, isSolanaChain, resolveToken } from './chains.js';
 import { getDb } from './db.js';
 import { AppError } from './errors.js';
 import { getProvider, mapRpcError, verifyChainId } from './rpc.js';
@@ -8,6 +8,8 @@ import { getWalletById } from './wallet-store.js';
 import { decryptSecretAsBuffer } from './crypto.js';
 import { safeSummary } from '../util/redact.js';
 import type { OperationRow, PublicOperationRow } from './types.js';
+import { getEvmAdapter } from './evm-adapter.js';
+import { getSolanaAdapter } from './solana-adapter.js';
 
 function toPublicOperation(row: OperationRow): PublicOperationRow {
   const { wallet_id, meta_json, ...rest } = row;
@@ -20,61 +22,73 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-export async function walletBalance(walletId: string): Promise<{
+export async function walletBalance(walletId: string, chainKey?: ChainKey): Promise<{
   name: string;
   address: string;
-  chain_id: number;
-  balances: { POL: string; USDC: string; 'USDC.e': string };
+  chain: string;
+  balances: Record<string, string>;
 }> {
+  const key = chainKey ?? getDefaultChainKey();
+  const chain = getChain(key);
   const wallet = getWalletById(walletId);
-  await verifyChainId();
-  try {
-    const provider = getProvider();
-    const [polRaw, usdcRaw, usdcBridgedRaw] = await Promise.all([
-      provider.getBalance(wallet.address),
-      new Contract(USDC_ADDRESS, ['function balanceOf(address) view returns (uint256)'], provider).balanceOf(wallet.address),
-      new Contract(USDC_LEGACY_ADDRESS, ['function balanceOf(address) view returns (uint256)'], provider).balanceOf(wallet.address)
-    ]);
 
-    return {
-      name: wallet.name,
-      address: wallet.address,
-      chain_id: CHAIN_ID,
-      balances: {
-        POL: formatEther(polRaw),
-        USDC: formatUnits(usdcRaw, 6),
-        'USDC.e': formatUnits(usdcBridgedRaw, 6)
-      }
-    };
+  if (isSolanaChain(key)) {
+    if (!wallet.solana_address) {
+      throw new AppError('ERR_INVALID_PARAMS', 'This wallet does not support Solana. Create a new wallet to use Solana.');
+    }
+    try {
+      const adapter = getSolanaAdapter();
+      const balances = await adapter.getBalances(wallet.solana_address);
+      return { name: wallet.name, address: wallet.solana_address, chain: chain.name, balances };
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      const raw = err instanceof Error ? err.message : String(err);
+      throw new AppError('ERR_RPC_UNAVAILABLE', safeSummary(raw));
+    }
+  }
+
+  // EVM path
+  await verifyChainId(key);
+  try {
+    const adapter = getEvmAdapter(key);
+    const balances = await adapter.getBalances(wallet.address);
+    return { name: wallet.name, address: wallet.address, chain: chain.name, balances };
   } catch (err) {
+    if (err instanceof AppError) throw err;
     return mapRpcError(err);
   }
 }
 
-export async function preflightBalanceCheck(walletId: string, token: 'POL' | 'USDC' | 'USDC.e', amount: number): Promise<void> {
-  const bal = await walletBalance(walletId);
-  const polBalance = Number(bal.balances.POL);
-  if (token === 'POL') {
-    const needed = amount + GAS_ESTIMATE_NATIVE_POL;
-    if (polBalance < needed) {
+export async function preflightBalanceCheck(walletId: string, token: string, amount: number, chainKey?: ChainKey): Promise<void> {
+  const key = chainKey ?? getDefaultChainKey();
+  const chain = getChain(key);
+  const tokenInfo = resolveToken(chain, token);
+  const bal = await walletBalance(walletId, key);
+  const nativeToken = chain.tokens.find(t => t.address === null)!;
+  const nativeBalance = Number(bal.balances[nativeToken.symbol]);
+
+  if (tokenInfo.address === null) {
+    // Native token send
+    const needed = amount + chain.gasEstimateNative;
+    if (nativeBalance < needed) {
       throw new AppError(
         'ERR_INSUFFICIENT_FUNDS',
-        `Insufficient POL: need ~${needed.toFixed(4)} (${amount} + ~${GAS_ESTIMATE_NATIVE_POL} gas), have ${polBalance.toFixed(4)}`
+        `Insufficient ${tokenInfo.symbol}: need ~${needed.toFixed(4)} (${amount} + ~${chain.gasEstimateNative} gas), have ${nativeBalance.toFixed(4)}`
       );
     }
   } else {
-    const label = token === 'USDC.e' ? 'USDC.e' : 'USDC';
-    const tokenBalance = Number(token === 'USDC.e' ? bal.balances['USDC.e'] : bal.balances.USDC);
+    // ERC20 send
+    const tokenBalance = Number(bal.balances[tokenInfo.symbol]);
     if (tokenBalance < amount) {
       throw new AppError(
         'ERR_INSUFFICIENT_FUNDS',
-        `Insufficient ${label}: need ${amount}, have ${tokenBalance.toFixed(6)}`
+        `Insufficient ${tokenInfo.symbol}: need ${amount}, have ${tokenBalance.toFixed(6)}`
       );
     }
-    if (polBalance < GAS_ESTIMATE_ERC20_POL) {
+    if (nativeBalance < chain.gasEstimateErc20) {
       throw new AppError(
         'ERR_INSUFFICIENT_FUNDS',
-        `Insufficient POL for gas: need ~${GAS_ESTIMATE_ERC20_POL}, have ${polBalance.toFixed(4)}`
+        `Insufficient ${nativeToken.symbol} for gas: need ~${chain.gasEstimateErc20}, have ${nativeBalance.toFixed(4)}`
       );
     }
   }
@@ -83,71 +97,88 @@ export async function preflightBalanceCheck(walletId: string, token: 'POL' | 'US
 export async function executeSend(input: {
   wallet_id: string;
   to: string;
-  token: 'POL' | 'USDC' | 'USDC.e';
+  token: string;
   amount: string;
   idempotency_key: string;
   password: string;
-  txId?: string; // If provided, pending record already created by atomic policy check
-}): Promise<{ tx_id: string; tx_hash: string; status: string; token: string; amount: string; to: string }> {
-  await verifyChainId();
+  txId?: string;
+  chain?: ChainKey;
+}): Promise<{ tx_id: string; tx_hash: string; status: string; token: string; amount: string; to: string; chain: string; explorer_url: string }> {
+  const chainKey = input.chain ?? getDefaultChainKey();
+  const chain = getChain(chainKey);
+  const tokenInfo = resolveToken(chain, input.token);
+  const solana = isSolanaChain(chainKey);
+  if (!solana) await verifyChainId(chainKey);
   const db = getDb();
   const walletRow = getWalletById(input.wallet_id);
   const txId = input.txId || `tx_${uuidv4().replace(/-/g, '').slice(0, 20)}`;
 
+  if (solana && (!walletRow.solana_address || !walletRow.encrypted_solana_key)) {
+    throw new AppError('ERR_INVALID_PARAMS', 'This wallet does not support Solana. Create a new wallet to use Solana.');
+  }
+
   // Preflight: check balance before decrypting keys
-  await preflightBalanceCheck(input.wallet_id, input.token, Number(input.amount));
+  await preflightBalanceCheck(input.wallet_id, input.token, Number(input.amount), chainKey);
 
   // H-8: Insert pending record before broadcasting (skip if already created atomically)
   if (!input.txId) {
     const now = nowIso();
     db.prepare(
-      `INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,created_at,updated_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(txId, input.wallet_id, 'send', 'pending', input.token, input.amount, input.to, null, null, input.idempotency_key, JSON.stringify({}), now, now);
+      `INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,chain_name,chain_id,created_at,updated_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(txId, input.wallet_id, 'send', 'pending', input.token, input.amount, input.to, null, null, input.idempotency_key, JSON.stringify({}), chain.name, chain.chainId, now, now);
   }
 
   let pkBuf: Buffer | null = null;
   try {
-    pkBuf = decryptSecretAsBuffer(walletRow.encrypted_private_key, input.password);
-    // SECURITY NOTE: toString('utf8') creates an immutable JS string in V8 heap that cannot
-    // be zeroed. This is a Node.js runtime limitation. The Buffer is zeroed in finally{}.
-    // Mitigation: short-lived scope, no persistence, signer discarded after tx broadcast.
-    const signer = new Wallet(pkBuf.toString('utf8'), getProvider());
-    let txHash = '';
+    if (solana) {
+      // Solana path — decrypt solana key
+      pkBuf = decryptSecretAsBuffer(walletRow.encrypted_solana_key!, input.password);
+      const adapter = getSolanaAdapter();
+      const result = await adapter.send({
+        privateKey: pkBuf,
+        to: input.to,
+        token: input.token,
+        amount: input.amount,
+      });
 
-    if (input.token === 'POL') {
-      const tx = await signer.sendTransaction({ to: input.to, value: parseEther(input.amount) });
-      txHash = tx.hash;
-    } else {
-      const contractAddr = input.token === 'USDC.e' ? USDC_LEGACY_ADDRESS : USDC_ADDRESS;
-      const contract = new Contract(contractAddr, ['function transfer(address to, uint256 amount) returns (bool)'], signer);
-      const tx = await contract.transfer(input.to, parseUnits(input.amount, 6));
-      txHash = tx.hash;
+      // Solana sends are confirmed inline via sendAndConfirmTransaction
+      db.transaction(() => {
+        db.prepare('UPDATE operations SET status=?, tx_hash=?, updated_at=? WHERE tx_id=?')
+          .run(result.status, result.txHash, nowIso(), txId);
+        db.prepare('UPDATE idempotency_keys SET ref_id=?, status=? WHERE key=?')
+          .run(txId, 'completed', input.idempotency_key);
+      })();
+
+      return { tx_id: txId, tx_hash: result.txHash, status: result.status, token: input.token, amount: input.amount, to: input.to, chain: chain.name, explorer_url: `${chain.explorerTxUrl}${result.txHash}` };
     }
+
+    // EVM path
+    pkBuf = decryptSecretAsBuffer(walletRow.encrypted_private_key, input.password);
+    const adapter = getEvmAdapter(chainKey);
+    const result = await adapter.send({
+      privateKey: pkBuf,
+      to: input.to,
+      token: input.token,
+      amount: input.amount,
+    });
 
     // H-8: Update to broadcasted + bind idempotency atomically
     db.transaction(() => {
       db.prepare('UPDATE operations SET status=?, tx_hash=?, updated_at=? WHERE tx_id=?')
-        .run('broadcasted', txHash, nowIso(), txId);
+        .run('broadcasted', result.txHash, nowIso(), txId);
       db.prepare('UPDATE idempotency_keys SET ref_id=?, status=? WHERE key=?')
         .run(txId, 'completed', input.idempotency_key);
     })();
 
-    // Wait for on-chain confirmation (timeout 45s — Polygon ~2s blocks)
-    let finalStatus = 'broadcasted';
-    try {
-      const provider = getProvider();
-      const receipt = await provider.waitForTransaction(txHash, 1, 45_000);
-      if (receipt) {
-        finalStatus = receipt.status === 1 ? 'confirmed' : 'failed';
-        db.prepare('UPDATE operations SET status=?, updated_at=? WHERE tx_id=?')
-          .run(finalStatus, nowIso(), txId);
-      }
-    } catch {
-      // Timeout or network error — keep broadcasted, don't block
+    // Wait for on-chain confirmation
+    const confirmation = await adapter.waitForConfirmation(result.txHash, 45_000);
+    if (confirmation.status !== 'broadcasted') {
+      db.prepare('UPDATE operations SET status=?, updated_at=? WHERE tx_id=?')
+        .run(confirmation.status, nowIso(), txId);
     }
 
-    return { tx_id: txId, tx_hash: txHash, status: finalStatus, token: input.token, amount: input.amount, to: input.to };
+    return { tx_id: txId, tx_hash: result.txHash, status: confirmation.status, token: input.token, amount: input.amount, to: input.to, chain: chain.name, explorer_url: `${chain.explorerTxUrl}${result.txHash}` };
   } catch (err) {
     // H-8: Mark as failed on error
     try {
@@ -155,9 +186,10 @@ export async function executeSend(input: {
         .run('failed', nowIso(), txId);
     } catch { /* best effort */ }
 
+    if (err instanceof AppError) throw err;
     const raw = err instanceof Error ? err.message : String(err);
     const msg = safeSummary(raw);
-    if (/insufficient funds/i.test(raw)) {
+    if (/insufficient funds|Attempt to debit/i.test(raw)) {
       throw new AppError('ERR_INSUFFICIENT_FUNDS', msg);
     }
     if (/execution reverted|replacement transaction underpriced|nonce|intrinsic gas too low/i.test(raw)) {
@@ -198,14 +230,16 @@ export function createPendingProviderOperation(input: {
   to_address?: string;
   idempotency_key: string;
   meta?: unknown;
+  chain_name?: string;
+  chain_id?: number;
 }): string {
   const db = getDb();
   const now = nowIso();
   const txId = `tx_${uuidv4().replace(/-/g, '').slice(0, 20)}`;
   db.prepare(
-    `INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,created_at,updated_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  ).run(txId, input.wallet_id, input.kind, 'pending', input.token, input.amount, input.to_address ?? null, null, null, input.idempotency_key, JSON.stringify(input.meta ?? {}), now, now);
+    `INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,chain_name,chain_id,created_at,updated_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(txId, input.wallet_id, input.kind, 'pending', input.token, input.amount, input.to_address ?? null, null, null, input.idempotency_key, JSON.stringify(input.meta ?? {}), input.chain_name ?? null, input.chain_id ?? null, now, now);
   return txId;
 }
 

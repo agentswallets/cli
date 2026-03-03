@@ -35,6 +35,10 @@ vi.mock('../src/core/wallet-store.js', () => ({
     name: 'alice',
     address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     encrypted_private_key: 'enc',
+    key_type: 'legacy' as const,
+    encrypted_mnemonic: null,
+    encrypted_solana_key: null,
+    solana_address: null,
     created_at: new Date().toISOString()
   }),
   resolveWallet: (identifier: string) => ({
@@ -42,13 +46,17 @@ vi.mock('../src/core/wallet-store.js', () => ({
     name: 'alice',
     address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     encrypted_private_key: 'enc',
+    key_type: 'legacy' as const,
+    encrypted_mnemonic: null,
+    encrypted_solana_key: null,
+    solana_address: null,
     created_at: new Date().toISOString()
   }),
   getPolicy: () => ({
     daily_limit: 10000,
     per_tx_limit: 10000,
     max_tx_per_day: 100,
-    allowed_tokens: ['POL', 'USDC', 'USDC.e'],
+    allowed_tokens: ['POL', 'USDC', 'USDC.e', 'USDT'],
     allowed_addresses: [],
     require_approval_above: null
   })
@@ -63,6 +71,16 @@ vi.mock('./tx.js', () => ({
 vi.mock('../src/commands/tx.js', () => ({
   txSendCommand: (...args: unknown[]) => mockTxSend(...args)
 }));
+
+/** Helper: polygon balance with all 4 tokens */
+function polygonBalance(pol: string, usdc: string, usdce: string, usdt = '0') {
+  return {
+    name: 'alice',
+    address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    chain: 'Polygon',
+    balances: { POL: pol, USDC: usdc, 'USDC.e': usdce, USDT: usdt }
+  };
+}
 
 describe('wallet drain command', () => {
   beforeEach(() => {
@@ -83,115 +101,81 @@ describe('wallet drain command', () => {
     memDb.close();
   });
 
-  it('drains all three tokens when all have balances', async () => {
+  it('drains all tokens when all have balances', async () => {
     // First call: initial balance check
-    mockWalletBalance.mockResolvedValueOnce({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '5.0', USDC: '100.0', 'USDC.e': '50.0' }
-    });
+    mockWalletBalance.mockResolvedValueOnce(polygonBalance('5.0', '100.0', '50.0', '25.0'));
     // Second call: re-check POL after ERC20 transfers
-    mockWalletBalance.mockResolvedValueOnce({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '4.98', USDC: '0', 'USDC.e': '0' }
-    });
+    mockWalletBalance.mockResolvedValueOnce(polygonBalance('4.97', '0', '0', '0'));
 
     mockTxSend.mockResolvedValue({ tx_id: 'tx_1', tx_hash: '0xhash1', status: 'broadcasted', token: 'USDC', amount: '100', to: '0xDEST' });
 
     const { walletDrainCommand } = await import('../src/commands/drain.js');
-    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD' });
+    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', chain: 'polygon' });
 
-    expect(result.results).toHaveLength(3);
+    expect(result.chain).toBe('Polygon');
+    // 3 ERC20 (USDC, USDC.e, USDT) + 1 native (POL) = 4
+    expect(result.results).toHaveLength(4);
     expect(result.results[0].token).toBe('USDC');
     expect(result.results[0].status).toBe('sent');
     expect(result.results[1].token).toBe('USDC.e');
     expect(result.results[1].status).toBe('sent');
-    expect(result.results[2].token).toBe('POL');
+    expect(result.results[2].token).toBe('USDT');
     expect(result.results[2].status).toBe('sent');
+    expect(result.results[3].token).toBe('POL');
+    expect(result.results[3].status).toBe('sent');
 
-    // txSendCommand called 3 times (USDC, USDC.e, POL)
-    expect(mockTxSend).toHaveBeenCalledTimes(3);
+    // txSendCommand called 4 times (USDC, USDC.e, USDT, POL)
+    expect(mockTxSend).toHaveBeenCalledTimes(4);
   });
 
   it('only transfers POL when ERC20 balances are zero', async () => {
-    mockWalletBalance.mockResolvedValueOnce({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '2.5', USDC: '0', 'USDC.e': '0' }
-    });
-    mockWalletBalance.mockResolvedValueOnce({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '2.5', USDC: '0', 'USDC.e': '0' }
-    });
+    mockWalletBalance.mockResolvedValueOnce(polygonBalance('2.5', '0', '0'));
+    mockWalletBalance.mockResolvedValueOnce(polygonBalance('2.5', '0', '0'));
 
     mockTxSend.mockResolvedValue({ tx_id: 'tx_pol', tx_hash: '0xhash_pol', status: 'broadcasted', token: 'POL', amount: '2.49', to: '0xDEST' });
 
     const { walletDrainCommand } = await import('../src/commands/drain.js');
-    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD' });
+    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', chain: 'polygon' });
 
     expect(result.results[0]).toEqual({ token: 'USDC', amount: '0', status: 'zero' });
     expect(result.results[1]).toEqual({ token: 'USDC.e', amount: '0', status: 'zero' });
-    expect(result.results[2].token).toBe('POL');
-    expect(result.results[2].status).toBe('sent');
+    expect(result.results[2]).toEqual({ token: 'USDT', amount: '0', status: 'zero' });
+    expect(result.results[3].token).toBe('POL');
+    expect(result.results[3].status).toBe('sent');
 
     // Only POL send
     expect(mockTxSend).toHaveBeenCalledTimes(1);
   });
 
   it('returns all zero when no balances', async () => {
-    mockWalletBalance.mockResolvedValue({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '0', USDC: '0', 'USDC.e': '0' }
-    });
+    mockWalletBalance.mockResolvedValue(polygonBalance('0', '0', '0'));
 
     const { walletDrainCommand } = await import('../src/commands/drain.js');
-    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD' });
+    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', chain: 'polygon' });
 
     expect(result.results).toEqual([
       { token: 'USDC', amount: '0', status: 'zero' },
       { token: 'USDC.e', amount: '0', status: 'zero' },
+      { token: 'USDT', amount: '0', status: 'zero' },
       { token: 'POL', amount: '0', status: 'zero' }
     ]);
     expect(mockTxSend).not.toHaveBeenCalled();
   });
 
   it('marks POL as dust when balance is below gas estimate', async () => {
-    mockWalletBalance.mockResolvedValue({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '0.005', USDC: '0', 'USDC.e': '0' }
-    });
+    mockWalletBalance.mockResolvedValue(polygonBalance('0.005', '0', '0'));
 
     const { walletDrainCommand } = await import('../src/commands/drain.js');
-    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD' });
+    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', chain: 'polygon' });
 
-    expect(result.results[2].token).toBe('POL');
-    expect(result.results[2].status).toBe('dust');
+    expect(result.results[3].token).toBe('POL');
+    expect(result.results[3].status).toBe('dust');
     expect(mockTxSend).not.toHaveBeenCalled();
   });
 
   it('ERC20 failure does not block POL transfer', async () => {
-    mockWalletBalance.mockResolvedValueOnce({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '3.0', USDC: '50.0', 'USDC.e': '0' }
-    });
-    mockWalletBalance.mockResolvedValueOnce({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '3.0', USDC: '50.0', 'USDC.e': '0' }
-    });
+    mockWalletBalance.mockResolvedValueOnce(polygonBalance('3.0', '50.0', '0'));
+    mockWalletBalance.mockResolvedValueOnce(polygonBalance('3.0', '50.0', '0'));
 
     // USDC send fails
     mockTxSend.mockRejectedValueOnce(new Error('RPC timeout'));
@@ -199,34 +183,32 @@ describe('wallet drain command', () => {
     mockTxSend.mockResolvedValueOnce({ tx_id: 'tx_pol', tx_hash: '0xhash_pol', status: 'broadcasted', token: 'POL', amount: '2.99', to: '0xDEST' });
 
     const { walletDrainCommand } = await import('../src/commands/drain.js');
-    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD' });
+    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', chain: 'polygon' });
 
     expect(result.results[0].token).toBe('USDC');
     expect(result.results[0].status).toBe('error');
     expect(result.results[0].error).toBe('RPC timeout');
     expect(result.results[1].token).toBe('USDC.e');
     expect(result.results[1].status).toBe('zero');
-    expect(result.results[2].token).toBe('POL');
-    expect(result.results[2].status).toBe('sent');
+    expect(result.results[2].token).toBe('USDT');
+    expect(result.results[2].status).toBe('zero');
+    expect(result.results[3].token).toBe('POL');
+    expect(result.results[3].status).toBe('sent');
   });
 
   it('dry-run returns preview status without calling txSendCommand', async () => {
-    mockWalletBalance.mockResolvedValueOnce({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '5.0', USDC: '100.0', 'USDC.e': '50.0' }
-    });
+    mockWalletBalance.mockResolvedValueOnce(polygonBalance('5.0', '100.0', '50.0'));
 
     const { walletDrainCommand } = await import('../src/commands/drain.js');
-    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', dryRun: true });
+    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', dryRun: true, chain: 'polygon' });
 
     expect(result.dry_run).toBe(true);
-    expect(result.results).toHaveLength(3);
+    expect(result.results).toHaveLength(4);
     expect(result.results[0]).toEqual({ token: 'USDC', amount: '100', status: 'preview' });
     expect(result.results[1]).toEqual({ token: 'USDC.e', amount: '50', status: 'preview' });
-    expect(result.results[2].token).toBe('POL');
-    expect(result.results[2].status).toBe('preview');
+    expect(result.results[2]).toEqual({ token: 'USDT', amount: '0', status: 'zero' });
+    expect(result.results[3].token).toBe('POL');
+    expect(result.results[3].status).toBe('preview');
     // No actual transfers
     expect(mockTxSend).not.toHaveBeenCalled();
     // Only one balance call (no re-check)
@@ -234,34 +216,25 @@ describe('wallet drain command', () => {
   });
 
   it('dry-run classifies zero and dust ERC20 correctly', async () => {
-    mockWalletBalance.mockResolvedValueOnce({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '1.0', USDC: '0', 'USDC.e': '0.005' }
-    });
+    mockWalletBalance.mockResolvedValueOnce(polygonBalance('1.0', '0', '0.005'));
 
     const { walletDrainCommand } = await import('../src/commands/drain.js');
-    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', dryRun: true });
+    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', dryRun: true, chain: 'polygon' });
 
     expect(result.dry_run).toBe(true);
     expect(result.results[0]).toEqual({ token: 'USDC', amount: '0', status: 'zero' });
     expect(result.results[1]).toEqual({ token: 'USDC.e', amount: '0.005', status: 'dust' });
+    expect(result.results[2]).toEqual({ token: 'USDT', amount: '0', status: 'zero' });
     expect(mockTxSend).not.toHaveBeenCalled();
   });
 
   it('dry-run estimates gas for POL based on ERC20 preview count', async () => {
     // 2 ERC20 tokens above dust → erc20PreviewCount = 2
     // gas estimate = 2 * 0.005 (ERC20) + 0.01 (native) = 0.02
-    mockWalletBalance.mockResolvedValueOnce({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '1.0', USDC: '100.0', 'USDC.e': '50.0' }
-    });
+    mockWalletBalance.mockResolvedValueOnce(polygonBalance('1.0', '100.0', '50.0'));
 
     const { walletDrainCommand } = await import('../src/commands/drain.js');
-    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', dryRun: true });
+    const result = await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', dryRun: true, chain: 'polygon' });
 
     const polResult = result.results.find(r => r.token === 'POL')!;
     expect(polResult.status).toBe('preview');
@@ -271,15 +244,10 @@ describe('wallet drain command', () => {
   });
 
   it('records wallet.drain audit log', async () => {
-    mockWalletBalance.mockResolvedValue({
-      name: 'alice',
-      address: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      chain_id: 137,
-      balances: { POL: '0', USDC: '0', 'USDC.e': '0' }
-    });
+    mockWalletBalance.mockResolvedValue(polygonBalance('0', '0', '0'));
 
     const { walletDrainCommand } = await import('../src/commands/drain.js');
-    await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD' });
+    await walletDrainCommand('w1', { to: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', chain: 'polygon' });
 
     const row = memDb.prepare("SELECT action, wallet_id FROM audit_logs WHERE action='wallet.drain'").get() as any;
     expect(row).toBeTruthy();

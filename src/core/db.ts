@@ -35,22 +35,71 @@ export function initDbSchema(): void {
 }
 
 function migrateSchema(db: Database.Database): void {
-  const cols = db.pragma('table_info(audit_logs)') as Array<{ name: string }>;
+  // --- audit_logs migrations ---
+  const auditCols = db.pragma('table_info(audit_logs)') as Array<{ name: string }>;
   // No columns = table doesn't exist yet (fresh DB, init hasn't run). Skip migration.
-  if (cols.length === 0) return;
-  const colNames = new Set(cols.map(c => c.name));
-  if (!colNames.has('prev_hash')) {
-    db.exec('ALTER TABLE audit_logs ADD COLUMN prev_hash TEXT');
+  if (auditCols.length > 0) {
+    const auditColNames = new Set(auditCols.map(c => c.name));
+    if (!auditColNames.has('prev_hash')) {
+      db.exec('ALTER TABLE audit_logs ADD COLUMN prev_hash TEXT');
+    }
+    if (!auditColNames.has('entry_hash')) {
+      db.exec('ALTER TABLE audit_logs ADD COLUMN entry_hash TEXT');
+    }
+    if (!auditColNames.has('wallet_address')) {
+      db.exec('ALTER TABLE audit_logs ADD COLUMN wallet_address TEXT');
+    }
+    if (!auditColNames.has('home_dir')) {
+      db.exec('ALTER TABLE audit_logs ADD COLUMN home_dir TEXT');
+    }
+    if (!auditColNames.has('chain_name')) {
+      db.exec('ALTER TABLE audit_logs ADD COLUMN chain_name TEXT');
+    }
+    if (!auditColNames.has('chain_id')) {
+      db.exec('ALTER TABLE audit_logs ADD COLUMN chain_id INTEGER');
+    }
   }
-  if (!colNames.has('entry_hash')) {
-    db.exec('ALTER TABLE audit_logs ADD COLUMN entry_hash TEXT');
+
+  // --- operations migrations (v0.3: multi-chain) ---
+  const opsCols = db.pragma('table_info(operations)') as Array<{ name: string }>;
+  if (opsCols.length > 0) {
+    const opsColNames = new Set(opsCols.map(c => c.name));
+    if (!opsColNames.has('chain_name')) {
+      db.exec("ALTER TABLE operations ADD COLUMN chain_name TEXT DEFAULT 'Polygon'");
+    }
+    if (!opsColNames.has('chain_id')) {
+      db.exec('ALTER TABLE operations ADD COLUMN chain_id INTEGER DEFAULT 137');
+    }
   }
-  if (!colNames.has('wallet_address')) {
-    db.exec('ALTER TABLE audit_logs ADD COLUMN wallet_address TEXT');
+
+  // --- wallets migrations (v0.4: HD wallet / Solana) ---
+  const walletCols = db.pragma('table_info(wallets)') as Array<{ name: string }>;
+  if (walletCols.length > 0) {
+    const walletColNames = new Set(walletCols.map(c => c.name));
+    if (!walletColNames.has('key_type')) {
+      db.exec("ALTER TABLE wallets ADD COLUMN key_type TEXT DEFAULT 'legacy'");
+    }
+    if (!walletColNames.has('encrypted_mnemonic')) {
+      db.exec('ALTER TABLE wallets ADD COLUMN encrypted_mnemonic TEXT');
+    }
+    if (!walletColNames.has('encrypted_solana_key')) {
+      db.exec('ALTER TABLE wallets ADD COLUMN encrypted_solana_key TEXT');
+    }
+    if (!walletColNames.has('solana_address')) {
+      db.exec('ALTER TABLE wallets ADD COLUMN solana_address TEXT');
+    }
   }
-  if (!colNames.has('home_dir')) {
-    db.exec('ALTER TABLE audit_logs ADD COLUMN home_dir TEXT');
-  }
+
+  // --- settings migration: ensure existing v0.2 users keep polygon as default ---
+  try {
+    const hasInit = db.prepare("SELECT value FROM settings WHERE key='initialized_at'").get();
+    if (hasInit) {
+      const hasDefault = db.prepare("SELECT value FROM settings WHERE key='default_chain'").get();
+      if (!hasDefault) {
+        db.prepare("INSERT INTO settings(key,value) VALUES('default_chain','polygon')").run();
+      }
+    }
+  } catch { /* settings table may not exist yet */ }
 }
 
 export function isInitialized(): boolean {

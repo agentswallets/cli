@@ -5,24 +5,27 @@ import { evaluatePolicy } from '../core/policy-engine.js';
 import { createPendingProviderOperation, dailySpendStats, executeSend, txHistory, txStatus } from '../core/tx-service.js';
 import { getPolicy } from '../core/wallet-store.js';
 import type { PublicOperationRow } from '../core/types.js';
-import { getOperationByIdempotencyKey, reserveIdempotencyKey } from '../util/idempotency.js';
-import { requireAddress, requirePositiveNumber } from '../util/validate.js';
+import { getOperationByIdempotencyKey, isStalePending, reserveIdempotencyKey } from '../util/idempotency.js';
+import { requireAddress, requireChainAddress, requirePositiveNumber } from '../util/validate.js';
 import { getMasterPassword } from '../util/agent-input.js';
 import { logAudit } from '../core/audit-service.js';
+import { type ChainKey, getChain, resolveChainKey, resolveToken } from '../core/chains.js';
 
 export async function txSendCommand(
   walletId: string,
-  opts: { to: string; token: string; amount: string; idempotencyKey: string; dryRun?: boolean }
-): Promise<{ tx_id: string; tx_hash: string | null; status: string; token: string; amount: string; to: string; dry_run?: boolean }> {
+  opts: { to: string; token: string; amount: string; idempotencyKey: string; dryRun?: boolean; chain?: string }
+): Promise<{ tx_id: string; tx_hash: string | null; status: string; token: string; amount: string; to: string; chain?: string; explorer_url?: string; dry_run?: boolean }> {
   assertInitialized();
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
 
-  const tokenUpper = opts.token.toUpperCase();
-  const token = (tokenUpper === 'USDC.E' || opts.token === 'USDC.e') ? 'USDC.e' : tokenUpper;
-  if (token !== 'POL' && token !== 'USDC' && token !== 'USDC.e') {
-    throw new AppError('ERR_INVALID_PARAMS', '--token must be POL|USDC|USDC.e');
-  }
-  const to = requireAddress(opts.to);
+  const chainKey = resolveChainKey(opts.chain);
+  const chain = getChain(chainKey);
+
+  // Resolve and validate token for this chain
+  const tokenInfo = resolveToken(chain, opts.token);
+  const token = tokenInfo.symbol;
+
+  const to = requireChainAddress(opts.to, chain.chainType);
   const amount = requirePositiveNumber(opts.amount, 'amount');
 
   // Dry-run: validate policy + preflight only, no DB writes or broadcast
@@ -33,7 +36,7 @@ export async function txSendCommand(
     if (decision.status !== 'allowed') {
       throw new AppError(decision.code, decision.message, decision.details);
     }
-    return { tx_id: '', tx_hash: null, status: 'dry_run', token, amount: String(amount), to, dry_run: true };
+    return { tx_id: '', tx_hash: null, status: 'dry_run', token, amount: String(amount), to, chain: chain.name, dry_run: true };
   }
 
   // ATOMIC: idempotency + policy check + pending INSERT under IMMEDIATE lock.
@@ -43,20 +46,23 @@ export async function txSendCommand(
     reserveIdempotencyKey(opts.idempotencyKey, 'tx_send');
     const existing = getOperationByIdempotencyKey(opts.idempotencyKey);
     if (existing) {
-      if (existing.status !== 'failed' && existing.status !== 'pending') {
+      if (existing.status === 'failed' || isStalePending(existing)) {
+        // Failed or stale pending (process crashed) — safe to delete and recreate
+        db.prepare('DELETE FROM operations WHERE tx_id=?').run(existing.tx_id);
+        db.prepare('DELETE FROM idempotency_keys WHERE key=?').run(opts.idempotencyKey);
+        reserveIdempotencyKey(opts.idempotencyKey, 'tx_send');
+      } else {
+        // pending/broadcasted/confirmed — return existing to avoid double-send
         return {
           type: 'replay' as const,
           tx_id: existing.tx_id,
           tx_hash: existing.tx_hash ?? null,
-          status: existing.status ?? 'broadcasted',
+          status: existing.status ?? 'pending',
           token: existing.token ?? token,
           amount: existing.amount ?? String(amount),
           to: existing.to_address ?? to
         };
       }
-      db.prepare('DELETE FROM operations WHERE tx_id=?').run(existing.tx_id);
-      db.prepare('DELETE FROM idempotency_keys WHERE key=?').run(opts.idempotencyKey);
-      reserveIdempotencyKey(opts.idempotencyKey, 'tx_send');
     }
     const stats = dailySpendStats(walletId, token);
     const decision = evaluatePolicy({ policy, token, amount, toAddress: to, stats });
@@ -66,7 +72,9 @@ export async function txSendCommand(
         action: 'tx.send',
         request: { walletId, ...opts },
         decision: 'denied',
-        error_code: decision.code
+        error_code: decision.code,
+        chain_name: chain.name,
+        chain_id: chain.chainId
       });
       throw new AppError(decision.code, decision.message, decision.details);
     }
@@ -79,13 +87,15 @@ export async function txSendCommand(
         amount: String(amount),
         to_address: to,
         idempotency_key: opts.idempotencyKey,
-        meta: { to }
+        meta: { to },
+        chain_name: chain.name,
+        chain_id: chain.chainId
       })
     };
   }).immediate();
 
   if (atomicResult.type === 'replay') {
-    return { tx_id: atomicResult.tx_id, tx_hash: atomicResult.tx_hash, status: atomicResult.status, token: atomicResult.token, amount: atomicResult.amount, to: atomicResult.to };
+    return { tx_id: atomicResult.tx_id, tx_hash: atomicResult.tx_hash, status: atomicResult.status, token: atomicResult.token, amount: atomicResult.amount, to: atomicResult.to, chain: chain.name };
   }
   const txId = atomicResult.txId;
 
@@ -97,7 +107,8 @@ export async function txSendCommand(
     amount: String(amount),
     idempotency_key: opts.idempotencyKey,
     password,
-    txId
+    txId,
+    chain: chainKey
   });
 
   logAudit({
@@ -105,7 +116,9 @@ export async function txSendCommand(
     action: 'tx.send',
     request: { walletId, ...opts },
     decision: 'sent',
-    result: sendResult
+    result: sendResult,
+    chain_name: chain.name,
+    chain_id: chain.chainId
   });
   return sendResult;
 }

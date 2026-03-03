@@ -13,13 +13,17 @@ vi.mock('../src/core/db.js', () => ({
   isInitialized: () => true
 }));
 
-// Mock wallet-store to return a test wallet
+// Mock wallet-store to return a test wallet (legacy type)
 vi.mock('../src/core/wallet-store.js', () => ({
   getWalletById: (id: string) => ({
     id,
     name: 'test',
     address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     encrypted_private_key: '{}',
+    key_type: 'legacy' as const,
+    encrypted_mnemonic: null,
+    encrypted_solana_key: null,
+    solana_address: null,
     created_at: new Date().toISOString()
   })
 }));
@@ -61,11 +65,12 @@ vi.mock('ethers', () => {
 });
 
 vi.mock('../src/core/rpc.js', () => ({
-  getProvider: () => ({
+  getProvider: (_chainKey?: string) => ({
     getBalance: vi.fn().mockResolvedValue(BigInt(100e18)),
     waitForTransaction: mockWaitForTransaction
   }),
-  verifyChainId: async () => {},
+  verifyChainId: async (_chainKey?: string) => {},
+  withRetry: async <T>(fn: (provider: unknown) => Promise<T>) => fn({}),
   erc20: () => ({}),
   mapRpcError: (err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err);
@@ -110,7 +115,8 @@ describe('tx-service', () => {
         token: 'POL',
         amount: '1.0',
         idempotency_key: 'k1',
-        password: 'test'
+        password: 'test',
+        chain: 'polygon'
       });
       expect(result.tx_hash).toBe('0xhash123');
       expect(result.status).toBe('confirmed');
@@ -142,7 +148,8 @@ describe('tx-service', () => {
           token: 'POL',
           amount: '999',
           idempotency_key: 'k3',
-          password: 'test'
+          password: 'test',
+          chain: 'polygon'
         })
       ).rejects.toThrow(/Insufficient POL/i);
     });
@@ -157,7 +164,8 @@ describe('tx-service', () => {
           token: 'POL',
           amount: '1',
           idempotency_key: 'k4',
-          password: 'test'
+          password: 'test',
+          chain: 'polygon'
         })
       ).rejects.toThrow(/nonce/i);
     });
@@ -171,7 +179,8 @@ describe('tx-service', () => {
         token: 'POL',
         amount: '1',
         idempotency_key: 'k5',
-        password: 'test'
+        password: 'test',
+        chain: 'polygon'
       });
       const ops = memDb.prepare('SELECT * FROM operations WHERE idempotency_key=?').all('k5');
       expect(ops).toHaveLength(1);
@@ -187,7 +196,8 @@ describe('tx-service', () => {
         token: 'POL',
         amount: '1',
         idempotency_key: 'k6',
-        password: 'test'
+        password: 'test',
+        chain: 'polygon'
       });
       expect(result.status).toBe('confirmed');
       const op = memDb.prepare('SELECT status FROM operations WHERE idempotency_key=?').get('k6') as any;
@@ -204,7 +214,8 @@ describe('tx-service', () => {
         token: 'POL',
         amount: '1',
         idempotency_key: 'k7',
-        password: 'test'
+        password: 'test',
+        chain: 'polygon'
       });
       expect(result.status).toBe('failed');
       const op = memDb.prepare('SELECT status FROM operations WHERE idempotency_key=?').get('k7') as any;
@@ -221,7 +232,8 @@ describe('tx-service', () => {
         token: 'POL',
         amount: '1',
         idempotency_key: 'k8',
-        password: 'test'
+        password: 'test',
+        chain: 'polygon'
       });
       expect(result.status).toBe('broadcasted');
       const op = memDb.prepare('SELECT status FROM operations WHERE idempotency_key=?').get('k8') as any;
@@ -234,9 +246,9 @@ describe('tx-service', () => {
       const now = new Date().toISOString();
       memDb
         .prepare(
-          'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,chain_name,chain_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
-        .run('tx_h1', 'w1', 'send', 'confirmed', 'POL', '1', '0xbb', '0xhash', null, 'ik_h1', '{"to":"0xbb"}', now, now);
+        .run('tx_h1', 'w1', 'send', 'confirmed', 'POL', '1', '0xbb', '0xhash', null, 'ik_h1', '{"to":"0xbb"}', 'Polygon', 137, now, now);
       const { txHistory } = await import('../src/core/tx-service.js');
       const result = txHistory('w1', 10);
       expect(result.operations).toHaveLength(1);
@@ -253,9 +265,9 @@ describe('tx-service', () => {
       const now = new Date().toISOString();
       memDb
         .prepare(
-          'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,chain_name,chain_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
-        .run('tx_s99', 'w1', 'send', 'confirmed', 'POL', '1', '0xbb', '0xhash', null, 'ik_s99', '{"to":"0xbb"}', now, now);
+        .run('tx_s99', 'w1', 'send', 'confirmed', 'POL', '1', '0xbb', '0xhash', null, 'ik_s99', '{"to":"0xbb"}', 'Polygon', 137, now, now);
       const { txStatus } = await import('../src/core/tx-service.js');
       const result = txStatus('tx_s99');
       expect(result).not.toHaveProperty('wallet_id');
@@ -307,14 +319,14 @@ describe('tx-service', () => {
       const now = new Date().toISOString();
       memDb
         .prepare(
-          'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,chain_name,chain_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
-        .run('tx_s1', 'w1', 'send', 'broadcasted', 'USDC', '10', '0xbb', '0xh', null, 'ik1', '{}', now, now);
+        .run('tx_s1', 'w1', 'send', 'broadcasted', 'USDC', '10', '0xbb', '0xh', null, 'ik1', '{}', 'Polygon', 137, now, now);
       memDb
         .prepare(
-          'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,chain_name,chain_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
-        .run('tx_b1', 'w1', 'predict_buy', 'submitted', 'USDC', '2', null, null, 'ord1', 'ik2', '{}', now, now);
+        .run('tx_b1', 'w1', 'predict_buy', 'submitted', 'USDC', '2', null, null, 'ord1', 'ik2', '{}', 'Polygon', 137, now, now);
 
       const { dailySpendStats } = await import('../src/core/tx-service.js');
       const stats = dailySpendStats('w1', 'USDC');
@@ -326,9 +338,9 @@ describe('tx-service', () => {
       const yesterday = new Date(Date.now() - 86400000).toISOString();
       memDb
         .prepare(
-          'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,chain_name,chain_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
-        .run('tx_old', 'w1', 'send', 'broadcasted', 'USDC', '50', '0xbb', '0xh', null, 'ik3', '{}', yesterday, yesterday);
+        .run('tx_old', 'w1', 'send', 'broadcasted', 'USDC', '50', '0xbb', '0xh', null, 'ik3', '{}', 'Polygon', 137, yesterday, yesterday);
 
       const { dailySpendStats } = await import('../src/core/tx-service.js');
       const stats = dailySpendStats('w1', 'USDC');
@@ -339,11 +351,11 @@ describe('tx-service', () => {
     it('isolates spend per token but counts all tokens for txCount', async () => {
       const now = new Date().toISOString();
       const ins = memDb.prepare(
-        'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+        'INSERT INTO operations(tx_id,wallet_id,kind,status,token,amount,to_address,tx_hash,provider_order_id,idempotency_key,meta_json,chain_name,chain_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
       );
-      ins.run('tx_u1', 'w1', 'send', 'confirmed', 'USDC', '100', '0xbb', '0xh1', null, 'ik4', '{}', now, now);
-      ins.run('tx_m1', 'w1', 'send', 'confirmed', 'POL', '50', '0xbb', '0xh2', null, 'ik5', '{}', now, now);
-      ins.run('tx_u2', 'w1', 'send', 'broadcasted', 'USDC', '25', '0xcc', '0xh3', null, 'ik6', '{}', now, now);
+      ins.run('tx_u1', 'w1', 'send', 'confirmed', 'USDC', '100', '0xbb', '0xh1', null, 'ik4', '{}', 'Polygon', 137, now, now);
+      ins.run('tx_m1', 'w1', 'send', 'confirmed', 'POL', '50', '0xbb', '0xh2', null, 'ik5', '{}', 'Polygon', 137, now, now);
+      ins.run('tx_u2', 'w1', 'send', 'broadcasted', 'USDC', '25', '0xcc', '0xh3', null, 'ik6', '{}', 'Polygon', 137, now, now);
 
       const { dailySpendStats } = await import('../src/core/tx-service.js');
 

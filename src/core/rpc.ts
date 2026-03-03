@@ -1,5 +1,5 @@
 import { FetchRequest, JsonRpcProvider } from 'ethers';
-import { CHAIN_ID, DEFAULT_RPC_URL } from './constants.js';
+import { type ChainKey, getChain, getDefaultChainKey } from './chains.js';
 import { AppError } from './errors.js';
 import { safeSummary } from '../util/redact.js';
 
@@ -12,27 +12,36 @@ export function setRpcTimeout(ms: number): void {
   rpcTimeoutMs = ms;
 }
 
-function parseRpcUrls(): string[] {
-  const raw = process.env.AW_RPC_URL || DEFAULT_RPC_URL;
-  return raw
-    .split(',')
-    .map((u) => u.trim())
-    .filter(Boolean)
-    .map((url) => {
-      // M-3: Reject non-localhost http:// URLs
-      if (/^http:\/\//i.test(url)) {
-        const hostname = new URL(url).hostname;
-        if (hostname !== 'localhost' && hostname !== '127.0.0.1' && hostname !== '::1') {
-          throw new AppError('ERR_RPC_UNAVAILABLE', `Insecure RPC URL rejected (use HTTPS): ${url}`);
-        }
-      }
-      return url;
-    });
+type ProviderPool = { providers: JsonRpcProvider[]; idx: number; verified: boolean };
+const pools = new Map<ChainKey, ProviderPool>();
+
+function validateUrl(url: string): string {
+  // M-3: Reject non-localhost http:// URLs
+  if (/^http:\/\//i.test(url)) {
+    const hostname = new URL(url).hostname;
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1' && hostname !== '::1') {
+      throw new AppError('ERR_RPC_UNAVAILABLE', `Insecure RPC URL rejected (use HTTPS): ${url}`);
+    }
+  }
+  return url;
 }
 
-let providers: JsonRpcProvider[] | null = null;
-let currentIdx = 0;
-let chainIdVerified = false;
+function parseRpcUrls(chainKey: ChainKey): string[] {
+  const chain = getChain(chainKey);
+
+  // Priority: chain-specific env var > AW_RPC_URL (default chain only) > defaults
+  const chainEnv = process.env[chain.rpcEnvVar];
+  if (chainEnv) {
+    return chainEnv.split(',').map(u => u.trim()).filter(Boolean).map(validateUrl);
+  }
+
+  const genericEnv = process.env.AW_RPC_URL;
+  if (genericEnv && chainKey === getDefaultChainKey()) {
+    return genericEnv.split(',').map(u => u.trim()).filter(Boolean).map(validateUrl);
+  }
+
+  return chain.defaultRpcUrls.split(',').map(u => u.trim()).filter(Boolean).map(validateUrl);
+}
 
 function makeProvider(url: string): JsonRpcProvider {
   const req = new FetchRequest(url);
@@ -40,40 +49,46 @@ function makeProvider(url: string): JsonRpcProvider {
   return new JsonRpcProvider(req);
 }
 
-function initProviders(): JsonRpcProvider[] {
-  if (!providers) {
-    providers = parseRpcUrls().map((url) => makeProvider(url));
-    if (providers.length === 0) {
-      providers = [makeProvider(DEFAULT_RPC_URL)];
-    }
-    currentIdx = 0;
+function getPool(chainKey: ChainKey): ProviderPool {
+  let pool = pools.get(chainKey);
+  if (!pool) {
+    const urls = parseRpcUrls(chainKey);
+    const providers = urls.length > 0
+      ? urls.map(url => makeProvider(url))
+      : [makeProvider(getChain(chainKey).defaultRpcUrls.split(',')[0])];
+    pool = { providers, idx: 0, verified: false };
+    pools.set(chainKey, pool);
   }
-  return providers;
+  return pool;
 }
 
-export function getProvider(): JsonRpcProvider {
-  const list = initProviders();
-  return list[currentIdx % list.length];
+export function getProvider(chainKey?: ChainKey): JsonRpcProvider {
+  const key = chainKey ?? getDefaultChainKey();
+  const pool = getPool(key);
+  return pool.providers[pool.idx % pool.providers.length];
 }
 
-function nextProvider(): JsonRpcProvider {
-  const list = initProviders();
-  if (list.length > 1) {
-    currentIdx = (currentIdx + 1) % list.length;
+function nextProvider(chainKey: ChainKey): JsonRpcProvider {
+  const pool = getPool(chainKey);
+  if (pool.providers.length > 1) {
+    pool.idx = (pool.idx + 1) % pool.providers.length;
   }
-  return list[currentIdx];
+  return pool.providers[pool.idx];
 }
 
-export async function verifyChainId(): Promise<void> {
-  if (chainIdVerified) return;
-  const provider = getProvider();
+export async function verifyChainId(chainKey?: ChainKey): Promise<void> {
+  const key = chainKey ?? getDefaultChainKey();
+  const pool = getPool(key);
+  if (pool.verified) return;
+  const chain = getChain(key);
+  const provider = getProvider(key);
   try {
     const network = await provider.getNetwork();
     const chainId = Number(network.chainId);
-    if (chainId !== CHAIN_ID) {
-      throw new AppError('ERR_RPC_UNAVAILABLE', `RPC chain ID mismatch: expected ${CHAIN_ID} (Polygon), got ${chainId}. Check AW_RPC_URL.`);
+    if (chainId !== chain.chainId) {
+      throw new AppError('ERR_RPC_UNAVAILABLE', `RPC chain ID mismatch: expected ${chain.chainId} (${chain.name}), got ${chainId}. Check ${chain.rpcEnvVar}.`);
     }
-    chainIdVerified = true;
+    pool.verified = true;
   } catch (err) {
     if (err instanceof AppError) throw err;
     throw new AppError('ERR_RPC_UNAVAILABLE', `Failed to verify chain ID: ${err instanceof Error ? err.message : String(err)}`);
@@ -88,17 +103,18 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function withRetry<T>(fn: (provider: JsonRpcProvider) => Promise<T>): Promise<T> {
-  const list = initProviders();
+export async function withRetry<T>(fn: (provider: JsonRpcProvider) => Promise<T>, chainKey?: ChainKey): Promise<T> {
+  const key = chainKey ?? getDefaultChainKey();
+  const pool = getPool(key);
   let lastErr: unknown;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      return await fn(getProvider());
+      return await fn(getProvider(key));
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
       if (!isRetryableError(msg)) throw err;
-      if (list.length > 1) nextProvider();
+      if (pool.providers.length > 1) nextProvider(key);
       if (attempt < MAX_RETRIES - 1) {
         await sleep(BASE_DELAY_MS * 2 ** attempt);
       }
@@ -121,19 +137,15 @@ export function mapRpcError(err: unknown): never {
 
 /** Destroy all provider connections so Node.js can exit cleanly. */
 export function destroyProviders(): void {
-  if (providers) {
-    for (const p of providers) {
+  for (const pool of pools.values()) {
+    for (const p of pool.providers) {
       try { p.destroy(); } catch { /* best effort */ }
     }
-    providers = null;
-    currentIdx = 0;
-    chainIdVerified = false;
   }
+  pools.clear();
 }
 
 /** Reset provider state (for testing only). */
 export function __resetProviders(): void {
-  providers = null;
-  currentIdx = 0;
-  chainIdVerified = false;
+  pools.clear();
 }

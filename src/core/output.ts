@@ -82,7 +82,7 @@ function formatHuman(data: unknown, prefix = ''): string {
     if (typeof data[0] === 'object' && data[0] !== null) {
       return data.map((item, i) => formatHuman(item, `[${i}] `)).join('\n---\n');
     }
-    return data.join(', ');
+    return data.join(' / ');
   }
   const entries = Object.entries(data as Record<string, unknown>);
   const lines: string[] = [];
@@ -96,13 +96,13 @@ function formatHuman(data: unknown, prefix = ''): string {
             lines.push(`  ${label}.${subKey}.${subSubKey}: ${subSubVal}`);
           }
         } else if (Array.isArray(subVal)) {
-          lines.push(`  ${label}.${subKey}: ${subVal.length === 0 ? '(none)' : subVal.join(', ')}`);
+          lines.push(`  ${label}.${subKey}: ${subVal.length === 0 ? '(none)' : subVal.join(' / ')}`);
         } else {
           lines.push(`  ${label}.${subKey}: ${subVal}`);
         }
       }
     } else if (Array.isArray(value)) {
-      lines.push(`  ${label}: ${value.length === 0 ? '(none)' : value.join(', ')}`);
+      lines.push(`  ${label}: ${value.length === 0 ? '(none)' : value.join(' / ')}`);
     } else {
       lines.push(`  ${label}: ${value}`);
     }

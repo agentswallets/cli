@@ -75,6 +75,7 @@ let memDb: Database.Database;
 
 function runMigration() {
   memDb.exec(SCHEMA_SQL);
+  // audit_logs migrations
   const cols = memDb.pragma('table_info(audit_logs)') as Array<{ name: string }>;
   const colNames = new Set(cols.map((c: { name: string }) => c.name));
   if (!colNames.has('prev_hash')) {
@@ -88,6 +89,36 @@ function runMigration() {
   }
   if (!colNames.has('home_dir')) {
     memDb.exec('ALTER TABLE audit_logs ADD COLUMN home_dir TEXT');
+  }
+  if (!colNames.has('chain_name')) {
+    memDb.exec('ALTER TABLE audit_logs ADD COLUMN chain_name TEXT');
+  }
+  if (!colNames.has('chain_id')) {
+    memDb.exec('ALTER TABLE audit_logs ADD COLUMN chain_id INTEGER');
+  }
+  // operations migrations
+  const opsCols = memDb.pragma('table_info(operations)') as Array<{ name: string }>;
+  const opsColNames = new Set(opsCols.map((c: { name: string }) => c.name));
+  if (!opsColNames.has('chain_name')) {
+    memDb.exec("ALTER TABLE operations ADD COLUMN chain_name TEXT DEFAULT 'Polygon'");
+  }
+  if (!opsColNames.has('chain_id')) {
+    memDb.exec('ALTER TABLE operations ADD COLUMN chain_id INTEGER DEFAULT 137');
+  }
+  // wallets migrations (v0.4: HD wallet / Solana)
+  const walletCols = memDb.pragma('table_info(wallets)') as Array<{ name: string }>;
+  const walletColNames = new Set(walletCols.map((c: { name: string }) => c.name));
+  if (!walletColNames.has('key_type')) {
+    memDb.exec("ALTER TABLE wallets ADD COLUMN key_type TEXT DEFAULT 'legacy'");
+  }
+  if (!walletColNames.has('encrypted_mnemonic')) {
+    memDb.exec('ALTER TABLE wallets ADD COLUMN encrypted_mnemonic TEXT');
+  }
+  if (!walletColNames.has('encrypted_solana_key')) {
+    memDb.exec('ALTER TABLE wallets ADD COLUMN encrypted_solana_key TEXT');
+  }
+  if (!walletColNames.has('solana_address')) {
+    memDb.exec('ALTER TABLE wallets ADD COLUMN solana_address TEXT');
   }
 }
 
@@ -144,6 +175,40 @@ describe('DB migration: old schema without prev_hash/entry_hash', () => {
     const { initDbSchema } = await import('../src/core/db.js');
     initDbSchema();
     expect(() => initDbSchema()).not.toThrow();
+  });
+
+  it('adds HD wallet columns to old wallets table', async () => {
+    const colsBefore = memDb.pragma('table_info(wallets)') as Array<{ name: string }>;
+    const namesBefore = colsBefore.map(c => c.name);
+    expect(namesBefore).not.toContain('key_type');
+    expect(namesBefore).not.toContain('encrypted_mnemonic');
+    expect(namesBefore).not.toContain('encrypted_solana_key');
+    expect(namesBefore).not.toContain('solana_address');
+
+    const { initDbSchema } = await import('../src/core/db.js');
+    initDbSchema();
+
+    const colsAfter = memDb.pragma('table_info(wallets)') as Array<{ name: string }>;
+    const namesAfter = colsAfter.map(c => c.name);
+    expect(namesAfter).toContain('key_type');
+    expect(namesAfter).toContain('encrypted_mnemonic');
+    expect(namesAfter).toContain('encrypted_solana_key');
+    expect(namesAfter).toContain('solana_address');
+  });
+
+  it('existing legacy wallets get key_type=legacy after migration', async () => {
+    // Insert a wallet in old schema (no key_type column)
+    memDb.prepare(
+      `INSERT INTO wallets(id,name,address,encrypted_private_key,created_at)
+       VALUES('w_old','legacy1','0xaaa','enc','2024-01-01T00:00:00Z')`
+    ).run();
+
+    const { initDbSchema } = await import('../src/core/db.js');
+    initDbSchema();
+
+    const row = memDb.prepare('SELECT key_type, solana_address FROM wallets WHERE id=?').get('w_old') as any;
+    expect(row.key_type).toBe('legacy');
+    expect(row.solana_address).toBeNull();
   });
 
   it('adds wallet_address and home_dir columns to old audit_logs table', async () => {
