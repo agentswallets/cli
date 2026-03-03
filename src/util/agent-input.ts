@@ -59,7 +59,7 @@ export async function getMasterPassword(promptText: string): Promise<string> {
   if (isNonInteractive()) {
     throw new AppError(
       'ERR_INVALID_PARAMS',
-      'Master password required in non-interactive mode. Set AW_MASTER_PASSWORD or AW_MASTER_PASSWORD_ENV.'
+      'Master password required. Use `export AW_MASTER_PASSWORD=...` (persists across commands), AW_MASTER_PASSWORD_ENV, or `aw keychain save`.'
     );
   }
   return askHidden(promptText);

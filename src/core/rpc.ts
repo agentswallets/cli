@@ -46,7 +46,7 @@ function parseRpcUrls(chainKey: ChainKey): string[] {
 function makeProvider(url: string): JsonRpcProvider {
   const req = new FetchRequest(url);
   req.timeout = rpcTimeoutMs;
-  return new JsonRpcProvider(req);
+  return new JsonRpcProvider(req, undefined, { batchMaxCount: 1 });
 }
 
 function getPool(chainKey: ChainKey): ProviderPool {

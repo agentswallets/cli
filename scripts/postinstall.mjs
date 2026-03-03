@@ -1,16 +1,6 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-
-// Only show brand logo on first install (no existing data directory)
-const awHome = process.env.AGENTSWALLETS_HOME || join(homedir(), '.agentswallets');
-if (existsSync(awHome)) {
-  process.exit(0);
-}
-
 try {
   const cfonts = (await import('cfonts')).default;
-  cfonts.say('AGENTSWALLETS', {
+  cfonts.say('AGENTS|WALLETS', {
     font: 'block',
     colors: ['whiteBright'],
     letterSpacing: 0,
@@ -22,8 +12,9 @@ try {
 
 process.stdout.write('\n');
 process.stdout.write('Wallets for AI Agents\n');
-process.stdout.write('Secure local custody + policy-first transfers + Polymarket\n');
-process.stdout.write('chain: Polygon (137)\n');
+process.stdout.write('Secure local custody · policy-first transfers · Polymarket\n');
+process.stdout.write('\n');
+process.stdout.write('Chains: Ethereum · Base · BNB · Polygon · Arbitrum · Solana\n');
 process.stdout.write('\n');
 process.stdout.write('Get started:\n');
 process.stdout.write('  aw init              Initialize data store\n');
