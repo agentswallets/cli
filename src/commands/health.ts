@@ -13,16 +13,18 @@ type HealthStatus = {
   version: string;
   chain: string;
   default_chain: string;
+  checked_chain: string;
   home_dir: string;
   db: { ok: boolean; error?: string };
   session: { ok: boolean };
   rpc: { ok: boolean; url: string; error?: string };
-  polymarket_cli: { ok: boolean; error?: string };
+  polymarket_sdk: { ok: boolean; error?: string };
   solana: { supported: true; rpc_url: string };
 };
 
 export async function healthCommand(chainOpt?: string): Promise<HealthStatus> {
-  const chainKey: ChainKey = chainOpt ? resolveChainKey(chainOpt) : getDefaultChainKey();
+  const defaultKey = getDefaultChainKey();
+  const chainKey: ChainKey = chainOpt ? resolveChainKey(chainOpt) : defaultKey;
   const chain = getChain(chainKey);
   const rawUrl = process.env[chain.rpcEnvVar] || process.env.AW_RPC_URL || chain.defaultRpcUrls;
 
@@ -33,12 +35,13 @@ export async function healthCommand(chainOpt?: string): Promise<HealthStatus> {
     ok: false,
     version: CLI_VERSION,
     chain: chain.name,
-    default_chain: chainKey,
+    default_chain: defaultKey,
+    checked_chain: chainKey,
     home_dir: getHomeDir(),
     db: { ok: false },
     session: { ok: false },
     rpc: { ok: false, url: redactUrl(rawUrl) },
-    polymarket_cli: { ok: false },
+    polymarket_sdk: { ok: false },
     solana: { supported: true, rpc_url: redactUrl(solanaRpcUrl) },
   };
 
@@ -76,26 +79,16 @@ export async function healthCommand(chainOpt?: string): Promise<HealthStatus> {
     result.rpc.error = safeSummary(err instanceof Error ? err.message : String(err));
   }
 
-  // Check polymarket CLI — try polymarket-cli first, then polymarket (matches cli-adapter.ts)
+  // Check Polymarket SDK connectivity (lightweight CLOB API ping)
   try {
-    const { execFileSync } = await import('node:child_process');
-    let found = false;
-    for (const binary of ['polymarket-cli', 'polymarket'] as const) {
-      try {
-        execFileSync(binary, ['--version'], { timeout: 5000, stdio: 'pipe' });
-        found = true;
-        break;
-      } catch {
-        // try next binary
-      }
-    }
-    if (found) {
-      result.polymarket_cli.ok = true;
-    } else {
-      result.polymarket_cli.error = 'polymarket CLI not found or not executable';
-    }
-  } catch {
-    result.polymarket_cli.error = 'polymarket CLI not found or not executable';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch('https://clob.polymarket.com/', { signal: controller.signal });
+    clearTimeout(timer);
+    result.polymarket_sdk.ok = res.ok;
+    if (!res.ok) result.polymarket_sdk.error = `CLOB API returned HTTP ${res.status}`;
+  } catch (err) {
+    result.polymarket_sdk.error = err instanceof Error ? err.message : 'CLOB API unreachable';
   }
 
   // Top-level ok = critical services (db + rpc) both healthy

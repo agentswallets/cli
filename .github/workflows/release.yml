@@ -26,6 +26,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Inject OKX credentials
+        run: |
+          cat > src/core/okx/embedded-keys.ts << 'KEYS_EOF'
+          export const EMBEDDED_OKX_API_KEY = '${{ secrets.OKX_API_KEY }}';
+          export const EMBEDDED_OKX_SECRET_KEY = '${{ secrets.OKX_SECRET_KEY }}';
+          export const EMBEDDED_OKX_PASSPHRASE = '${{ secrets.OKX_PASSPHRASE }}';
+          KEYS_EOF
+
+      - name: Inject Polymarket Builder credentials
+        run: |
+          cat > src/core/polymarket/embedded-keys.ts << 'KEYS_EOF'
+          export const EMBEDDED_POLY_BUILDER_API_KEY = '${{ secrets.POLY_BUILDER_API_KEY }}';
+          export const EMBEDDED_POLY_BUILDER_SECRET = '${{ secrets.POLY_BUILDER_SECRET }}';
+          export const EMBEDDED_POLY_BUILDER_PASSPHRASE = '${{ secrets.POLY_BUILDER_PASSPHRASE }}';
+          KEYS_EOF
+
       - name: Type check
         run: npx tsc --noEmit
 

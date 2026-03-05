@@ -1,11 +1,11 @@
 import type { PolymarketAdapter } from './adapter.js';
-import { CliPolymarketAdapter } from './cli-adapter.js';
+import { SdkPolymarketAdapter } from './sdk-adapter.js';
 
 let singleton: PolymarketAdapter | null = null;
 
 export function getPolymarketAdapter(): PolymarketAdapter {
   if (!singleton) {
-    singleton = new CliPolymarketAdapter();
+    singleton = new SdkPolymarketAdapter();
   }
   return singleton;
 }

@@ -46,8 +46,8 @@ vi.mock('../src/core/wallet-store.js', () => ({
 
 // Track which chainKeys are queried for balance
 const balanceCalls: ChainKey[] = [];
-// Track which price IDs are fetched
-const priceFetchCalls: string[] = [];
+// Track which chainKeys are fetched for price
+const priceFetchCalls: ChainKey[] = [];
 
 // Chain key → should the RPC fail?
 let failingChains = new Set<ChainKey>();
@@ -71,15 +71,15 @@ vi.mock('../src/core/tx-service.js', () => ({
 }));
 
 vi.mock('../src/core/price.js', () => ({
-  fetchNativeTokenPrice: async (coinpaprikaId: string) => {
-    priceFetchCalls.push(coinpaprikaId);
+  fetchNativeTokenPrice: async (chainKey: ChainKey) => {
+    priceFetchCalls.push(chainKey);
     const prices: Record<string, number> = {
-      'eth-ethereum': 2500,
-      'pol-polygon-ecosystem-token': 0.45,
-      'bnb-binance-coin': 600,
-      'sol-solana': 180,
+      'ethereum': 2500,
+      'polygon': 0.45,
+      'bnb': 600,
+      'solana': 180,
     };
-    return prices[coinpaprikaId] ?? null;
+    return prices[chainKey] ?? null;
   },
 }));
 
@@ -131,17 +131,13 @@ describe('walletBalanceAllChainsCommand (single wallet × all chains)', () => {
     expect(chainNames).not.toContain('Solana');
   });
 
-  it('deduplicates price fetches (ETH/Base/Arbitrum share eth-ethereum)', async () => {
+  it('deduplicates price fetches (ETH/Base/Arbitrum share nativeToken ETH)', async () => {
     const { walletBalanceAllChainsCommand } = await import('../src/commands/wallet.js');
     await walletBalanceAllChainsCommand('w-hd');
 
-    // Should have only 4 unique price IDs: eth-ethereum, pol-polygon-ecosystem-token, bnb-binance-coin, sol-solana
-    const uniquePriceIds = new Set(priceFetchCalls);
-    expect(uniquePriceIds.size).toBe(4);
-    expect(uniquePriceIds).toContain('eth-ethereum');
-    expect(uniquePriceIds).toContain('pol-polygon-ecosystem-token');
-    expect(uniquePriceIds).toContain('bnb-binance-coin');
-    expect(uniquePriceIds).toContain('sol-solana');
+    // Should have only 4 unique native tokens: ETH, POL, BNB, SOL
+    const uniqueKeys = new Set(priceFetchCalls);
+    expect(uniqueKeys.size).toBe(4);
 
     // Total calls should be exactly 4 (not 6)
     expect(priceFetchCalls).toHaveLength(4);
@@ -192,7 +188,7 @@ describe('walletBalanceAllWalletsAllChainsCommand (--all without --chain)', () =
     expect(result.wallets).toEqual([]);
   });
 
-  it('pre-fetches prices once for all wallets (4 unique IDs)', async () => {
+  it('pre-fetches prices once for all wallets (4 unique native tokens)', async () => {
     const { walletBalanceAllWalletsAllChainsCommand } = await import('../src/commands/wallet.js');
     await walletBalanceAllWalletsAllChainsCommand();
 

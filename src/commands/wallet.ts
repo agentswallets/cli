@@ -204,7 +204,7 @@ export async function walletBalanceCommand(walletId: string, chainOpt?: string):
 
   const [result, nativePrice] = await Promise.all([
     walletBalance(walletId, chainKey),
-    fetchNativeTokenPrice(chain.coinpaprikaNativeId),
+    fetchNativeTokenPrice(chainKey),
   ]);
 
   const formatted = formatChainBalance(result.balances, result.address, chain, nativePrice);
@@ -238,7 +238,7 @@ export async function walletBalanceAllCommand(chainOpt?: string): Promise<{
   }
 
   const [nativePrice, ...rawBalances] = await Promise.all([
-    fetchNativeTokenPrice(chain.coinpaprikaNativeId),
+    fetchNativeTokenPrice(chainKey),
     ...walletRows.map(w => walletBalance(w.id, chainKey)),
   ]);
 
@@ -260,12 +260,16 @@ export async function walletBalanceAllChainsCommand(walletId: string): Promise<{
   const allKeys = getAllChainKeys();
   const supportedKeys = wallet.solana_address ? allKeys : allKeys.filter(k => !isSolanaChain(k));
 
-  // Deduplicate price fetches — e.g. ETH/Base/Arbitrum share 'eth-ethereum'
-  const priceIdSet = new Set(supportedKeys.map(k => getChain(k).coinpaprikaNativeId));
-  const priceIds = [...priceIdSet];
-  const priceResults = await Promise.all(priceIds.map(id => fetchNativeTokenPrice(id)));
+  // Deduplicate price fetches — e.g. ETH/Base/Arbitrum share nativeToken 'ETH'
+  const nativeTokenToKey = new Map<string, ChainKey>();
+  for (const k of supportedKeys) {
+    const nt = getChain(k).nativeToken;
+    if (!nativeTokenToKey.has(nt)) nativeTokenToKey.set(nt, k);
+  }
+  const uniqueKeys = [...nativeTokenToKey.values()];
+  const priceResults = await Promise.all(uniqueKeys.map(k => fetchNativeTokenPrice(k)));
   const priceMap = new Map<string, number | null>();
-  priceIds.forEach((id, i) => priceMap.set(id, priceResults[i]));
+  uniqueKeys.forEach((k, i) => priceMap.set(getChain(k).nativeToken, priceResults[i]));
 
   // Fetch balances for all chains concurrently; skip chains whose RPC fails
   const balanceResults = await Promise.all(
@@ -279,7 +283,7 @@ export async function walletBalanceAllChainsCommand(walletId: string): Promise<{
     const bal = balanceResults[i];
     if (!bal) continue; // RPC failed — skip this chain
     const chain = getChain(supportedKeys[i]);
-    const nativePrice = priceMap.get(chain.coinpaprikaNativeId) ?? null;
+    const nativePrice = priceMap.get(chain.nativeToken) ?? null;
     chains.push(formatChainBalance(bal.balances, bal.address, chain, nativePrice));
   }
 
@@ -297,12 +301,15 @@ export async function walletBalanceAllWalletsAllChainsCommand(): Promise<{
   const walletRows = listWalletsInternal();
   if (walletRows.length === 0) return { wallets: [] };
 
-  // Pre-fetch all unique prices once
-  const allPriceIds = new Set(Object.values(CHAINS).map(c => c.coinpaprikaNativeId));
-  const priceIds = [...allPriceIds];
-  const priceResults = await Promise.all(priceIds.map(id => fetchNativeTokenPrice(id)));
+  // Pre-fetch all unique prices once (deduplicate by nativeToken)
+  const nativeTokenToKey = new Map<string, ChainKey>();
+  for (const c of Object.values(CHAINS)) {
+    if (!nativeTokenToKey.has(c.nativeToken)) nativeTokenToKey.set(c.nativeToken, c.key);
+  }
+  const uniqueKeys = [...nativeTokenToKey.values()];
+  const priceResults = await Promise.all(uniqueKeys.map(k => fetchNativeTokenPrice(k)));
   const priceMap = new Map<string, number | null>();
-  priceIds.forEach((id, i) => priceMap.set(id, priceResults[i]));
+  uniqueKeys.forEach((k, i) => priceMap.set(getChain(k).nativeToken, priceResults[i]));
 
   const allKeys = getAllChainKeys();
 
@@ -318,7 +325,7 @@ export async function walletBalanceAllWalletsAllChainsCommand(): Promise<{
         const bal = balanceResults[i];
         if (!bal) continue;
         const chain = getChain(supportedKeys[i]);
-        const nativePrice = priceMap.get(chain.coinpaprikaNativeId) ?? null;
+        const nativePrice = priceMap.get(chain.nativeToken) ?? null;
         chains.push(formatChainBalance(bal.balances, bal.address, chain, nativePrice));
       }
 

@@ -31,6 +31,12 @@ import { getMasterPassword } from './util/agent-input.js';
 import { requirePositiveInt } from './util/validate.js';
 import { redactSecrets } from './util/redact.js';
 import { resolveWallet } from './core/wallet-store.js';
+import { swapChainsCommand, swapQuoteCommand, swapExecCommand } from './commands/swap.js';
+import { bridgeChainsCommand, bridgeQuoteCommand, bridgeExecCommand, bridgeStatusCommand } from './commands/bridge.js';
+import { marketPriceCommand, marketCandlesCommand, marketTradesCommand } from './commands/market.js';
+import { tokenSearchCommand, tokenInfoCommand, tokenTrendingCommand, tokenHoldersCommand } from './commands/token-cmd.js';
+import { historyListCommand } from './commands/history.js';
+import { perpAssetsCommand, perpPricesCommand, perpFundingCommand, perpAccountCommand, perpPositionsCommand, perpOrdersCommand, perpOpenCommand, perpCloseCommand, perpCancelCommand } from './commands/perp.js';
 
 /** Resolve wallet identifier (name, address, or UUID) from positional arg OR --wallet flag. Returns internal wallet_id. */
 function resolveWalletArg(positional: string | undefined, flag: string | undefined): string {
@@ -108,19 +114,19 @@ export function buildCli(): Command {
       .action((opts: CommonOpts & { name: string }) => runCommand({ ...opts, write: true }, () => walletCreateCommand(opts.name)))
   );
   withCommon(wallet.command('list').description('List wallets').addHelpText('after', '\nExample:\n  aw wallet list --json\n').action((opts: CommonOpts) => runCommand(opts, () => walletListCommand())));
-  withCommon(wallet.command('info [wallet]').description('Get wallet info').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet info alice --json\n  aw wallet info --wallet 0xCFEb...B0B --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => walletInfoCommand(resolveWalletArg(walletArg, opts.wallet)))));
-  withCommon(wallet.command('balance [wallet]').description('Get wallet balance').option('--wallet <wallet>', 'Wallet name or address').option('--all', 'Show all wallets').addHelpText('after', '\nExample:\n  aw wallet balance alice --json\n  aw wallet balance --wallet 0xCFEb...B0B --json\n  aw wallet balance --all --json\n  aw wallet balance alice --chain ethereum --json\n  aw wallet balance alice --json              # all chains\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; all?: boolean; chain?: string }) => {
+  withCommon(wallet.command('info [wallet]').description('Get wallet info (wallet required as arg or --wallet)').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet info alice --json\n  aw wallet info --wallet 0xCFEb...B0B --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => walletInfoCommand(resolveWalletArg(walletArg, opts.wallet)))));
+  withCommon(wallet.command('balance [wallet]').description('Get wallet balance (wallet required unless --all)').option('--wallet <wallet>', 'Wallet name or address').option('--all', 'Show all wallets').addHelpText('after', '\nExample:\n  aw wallet balance alice --json\n  aw wallet balance --wallet 0xCFEb...B0B --json\n  aw wallet balance --all --json\n  aw wallet balance alice --chain ethereum --json\n  aw wallet balance alice --json              # all chains\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; all?: boolean; chain?: string }) => {
     if (opts.all && opts.chain) return runCommand(opts, () => walletBalanceAllCommand(opts.chain));
     if (opts.all) return runCommand(opts, () => walletBalanceAllWalletsAllChainsCommand());
     const walletId = resolveWalletArg(walletArg, opts.wallet);
     if (opts.chain) return runCommand(opts, () => walletBalanceCommand(walletId, opts.chain));
     return runCommand(opts, () => walletBalanceAllChainsCommand(walletId));
   }));
-  withCommon(wallet.command('deposit-address [wallet]').description('Get wallet deposit address').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet deposit-address alice --json\n  aw wallet deposit-address --wallet 0xCFEb...B0B --json\n  aw wallet deposit-address alice --chain solana --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; chain?: string }) => runCommand(opts, () => walletAddressCommand(resolveWalletArg(walletArg, opts.wallet), opts.chain))));
+  withCommon(wallet.command('deposit-address [wallet]').description('Get wallet deposit address (wallet required as arg or --wallet)').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet deposit-address alice --json\n  aw wallet deposit-address --wallet 0xCFEb...B0B --json\n  aw wallet deposit-address alice --chain solana --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; chain?: string }) => runCommand(opts, () => walletAddressCommand(resolveWalletArg(walletArg, opts.wallet), opts.chain))));
   withCommon(
     wallet
       .command('export-key [wallet]')
-      .description('Export wallet private key (dev only)')
+      .description('Export wallet private key (wallet required as arg or --wallet)')
       .option('--wallet <wallet>', 'Wallet name or address')
       .option('--yes', 'Skip confirmation')
       .option('--danger-export', 'Confirm you want to export the private key')
@@ -130,7 +136,7 @@ export function buildCli(): Command {
   withCommon(
     wallet
       .command('drain [wallet]')
-      .description('Drain all tokens from wallet to a destination address')
+      .description('Drain all tokens to a destination (wallet required as arg or --wallet)')
       .option('--wallet <wallet>', 'Wallet name or address')
       .requiredOption('--to <address>', 'Destination address')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
@@ -142,11 +148,11 @@ export function buildCli(): Command {
         return runCommand({ ...opts, write: !opts.dryRun }, () => walletDrainCommand(walletId, { to: opts.to, idempotencyKey: idemKey, dryRun: opts.dryRun, chain: opts.chain }));
       })
   );
-  withCommon(wallet.command('settings [wallet]').description('Show wallet policy (alias for: aw policy show)').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet settings alice --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => policyShowCommand(resolveWalletArg(walletArg, opts.wallet)))));
+  withCommon(wallet.command('settings [wallet]').description('Show wallet policy (alias for: aw policy show; wallet required as arg or --wallet)').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet settings alice --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => policyShowCommand(resolveWalletArg(walletArg, opts.wallet)))));
   withCommon(
     wallet
       .command('settings-set [wallet]')
-      .description('Set wallet limits (alias for: aw policy set)')
+      .description('Set wallet limits (alias for: aw policy set; wallet required as arg or --wallet)')
       .option('--wallet <wallet>', 'Wallet name or address')
       .option('--limit-daily <n>', 'Daily spending limit')
       .option('--limit-per-tx <n>', 'Per transaction spending limit')
@@ -202,7 +208,7 @@ export function buildCli(): Command {
       })
   );
 
-  const predict = program.command('predict').description('Prediction market operations');
+  const predict = program.command('predict').description('Prediction market operations (Polymarket, requires USDC.e on Polygon)');
   withCommonNoChain(
     predict
       .command('markets')
@@ -225,7 +231,7 @@ export function buildCli(): Command {
       .requiredOption('--price <n>', 'Price')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Validate without placing order')
-      .addHelpText('after', '\nExample:\n  aw predict buy --wallet alice --market mkt_xxx --outcome yes --size 10 --price 0.4 --json\n')
+      .addHelpText('after', '\nNote: Polymarket uses USDC.e (bridged) on Polygon, not native USDC.\n  Ensure wallet has USDC.e balance. Use `aw swap` to convert USDC → USDC.e if needed.\n  Run `aw predict approve-set` before first trade.\n\nExample:\n  aw predict buy --wallet alice --market mkt_xxx --outcome yes --size 10 --price 0.4 --json\n')
       .action((opts: CommonOpts & { wallet: string; market: string; outcome: string; size: string; price: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
@@ -250,7 +256,7 @@ export function buildCli(): Command {
       .requiredOption('--size <n>', 'Size')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Validate without placing order')
-      .addHelpText('after', '\nExample:\n  aw predict sell --wallet alice --position pos_xxx --size 5 --json\n')
+      .addHelpText('after', '\nNote: Polymarket uses USDC.e (bridged) on Polygon. Run `aw predict approve-set` before first trade.\n\nExample:\n  aw predict sell --wallet alice --position pos_xxx --size 5 --json\n')
       .action((opts: CommonOpts & { wallet: string; position: string; size: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
@@ -290,9 +296,9 @@ export function buildCli(): Command {
   withCommonNoChain(
     predict
       .command('approve-set')
-      .description('Execute contract approvals (6 approval transactions)')
+      .description('Execute contract approvals for USDC.e trading (required before first trade)')
       .requiredOption('--wallet <wallet>', 'Wallet name or address')
-      .addHelpText('after', '\nExample:\n  aw predict approve-set --wallet alice --json\n')
+      .addHelpText('after', '\nApproves USDC.e and CTF token contracts for Polymarket Exchange.\nMust be run once per wallet before placing orders.\n\nExample:\n  aw predict approve-set --wallet alice --json\n')
       .action((opts: CommonOpts & { wallet: string }) =>
         runCommand({ ...opts, write: true }, () => polyApproveSetCommand(resolveWalletArg(undefined, opts.wallet)))
       )
@@ -401,12 +407,12 @@ export function buildCli(): Command {
   // Top-level policy commands (canonical entry point for agents)
   const policy = program.command('policy').description('Spending policy operations');
   withCommon(
-    policy.command('show [wallet]').description('Show wallet spending policy').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw policy show alice --json\n  aw policy show --wallet 0xCFEb...B0B --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => policyShowCommand(resolveWalletArg(walletArg, opts.wallet))))
+    policy.command('show [wallet]').description('Show wallet spending policy (wallet required as arg or --wallet)').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw policy show alice --json\n  aw policy show --wallet 0xCFEb...B0B --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => policyShowCommand(resolveWalletArg(walletArg, opts.wallet))))
   );
   withCommon(
     policy
       .command('set [wallet]')
-      .description('Set wallet spending limits')
+      .description('Set wallet spending limits (wallet required as arg or --wallet)')
       .option('--wallet <wallet>', 'Wallet name or address')
       .option('--limit-daily <n>', 'Daily spending limit')
       .option('--limit-per-tx <n>', 'Per transaction spending limit')
@@ -428,7 +434,7 @@ export function buildCli(): Command {
   );
 
   withCommon(
-    program.command('health').description('Check system health (DB, RPC, session, polymarket CLI)').addHelpText('after', '\nExample:\n  aw health --json\n  aw health --chain solana --json\n').action((opts: CommonOpts & { chain?: string }) =>
+    program.command('health').description('Check system health (DB, RPC, session, Polymarket SDK)').addHelpText('after', '\nExample:\n  aw health --json\n  aw health --chain solana --json\n').action((opts: CommonOpts & { chain?: string }) =>
       runCommand(opts, async () => {
         const result = await healthCommand(opts.chain);
         if (!result.ok) {
@@ -508,6 +514,295 @@ export function buildCli(): Command {
         return { status: 'removed' };
       })
     )
+  );
+
+  // ── Swap (DEX aggregator) ──
+  const swap = program.command('swap').description('DEX swap operations (via OKX)');
+  withCommon(
+    swap.command('chains').description('List supported chains for DEX swap')
+      .addHelpText('after', '\nExample:\n  aw swap chains --json\n')
+      .action((opts: CommonOpts & { chain?: string }) => runCommand(opts, () => swapChainsCommand(opts)))
+  );
+  withCommon(
+    swap.command('quote').description('Get swap quote (no execution)')
+      .requiredOption('--from <token>', 'From token symbol or address')
+      .requiredOption('--to <token>', 'To token symbol or address')
+      .requiredOption('--amount <n>', 'Amount to swap')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .option('--slippage <n>', 'Slippage tolerance (default: 0.5%)')
+      .addHelpText('after', '\nExample:\n  aw swap quote --from ETH --to USDC --amount 1 --wallet alice --chain ethereum --json\n')
+      .action((opts: CommonOpts & { from: string; to: string; amount: string; wallet: string; slippage?: string; chain?: string }) =>
+        runCommand(opts, () => swapQuoteCommand(opts))
+      )
+  );
+  withCommon(
+    swap.command('exec').description('Execute token swap')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .requiredOption('--from <token>', 'From token symbol or address')
+      .requiredOption('--to <token>', 'To token symbol or address')
+      .requiredOption('--amount <n>', 'Amount to swap')
+      .option('--slippage <n>', 'Slippage tolerance (default: 0.5%)')
+      .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
+      .option('--dry-run', 'Validate without executing')
+      .addHelpText('after', '\nExample:\n  aw swap exec --wallet alice --from ETH --to USDC --amount 0.1 --chain ethereum --json\n')
+      .action((opts: CommonOpts & { wallet: string; from: string; to: string; amount: string; slippage?: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string }) => {
+        const walletId = resolveWalletArg(undefined, opts.wallet);
+        const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
+        return runCommand({ ...opts, write: !opts.dryRun }, () =>
+          swapExecCommand(walletId, {
+            chain: opts.chain,
+            from: opts.from,
+            to: opts.to,
+            amount: opts.amount,
+            slippage: opts.slippage,
+            idempotencyKey: idemKey,
+            dryRun: opts.dryRun,
+          })
+        );
+      })
+  );
+
+  // ── Bridge (cross-chain) ──
+  const bridge = program.command('bridge').description('Cross-chain bridge operations (via OKX)');
+  withCommon(
+    bridge.command('chains').description('List supported bridge chains')
+      .addHelpText('after', '\nExample:\n  aw bridge chains --json\n')
+      .action((opts: CommonOpts) => runCommand(opts, () => bridgeChainsCommand()))
+  );
+  withCommon(
+    bridge.command('quote').description('Get bridge quote')
+      .requiredOption('--from-chain <chain>', 'Source chain')
+      .requiredOption('--to-chain <chain>', 'Destination chain')
+      .requiredOption('--from-token <token>', 'From token')
+      .requiredOption('--to-token <token>', 'To token')
+      .requiredOption('--amount <n>', 'Amount')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .addHelpText('after', '\nExample:\n  aw bridge quote --from-chain ethereum --to-chain polygon --from-token ETH --to-token ETH --amount 0.1 --wallet alice --json\n')
+      .action((opts: CommonOpts & { fromChain: string; toChain: string; fromToken: string; toToken: string; amount: string; wallet: string }) =>
+        runCommand(opts, () => bridgeQuoteCommand(opts))
+      )
+  );
+  withCommon(
+    bridge.command('exec').description('Execute cross-chain bridge')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .requiredOption('--from-chain <chain>', 'Source chain')
+      .requiredOption('--to-chain <chain>', 'Destination chain')
+      .requiredOption('--from-token <token>', 'From token')
+      .requiredOption('--to-token <token>', 'To token')
+      .requiredOption('--amount <n>', 'Amount')
+      .option('--idempotency-key [key]', 'Idempotency key (auto-generated if omitted)')
+      .addHelpText('after', '\nExample:\n  aw bridge exec --wallet alice --from-chain ethereum --to-chain polygon --from-token ETH --to-token ETH --amount 0.1 --json\n')
+      .action((opts: CommonOpts & { wallet: string; fromChain: string; toChain: string; fromToken: string; toToken: string; amount: string; idempotencyKey?: string | boolean }) => {
+        const walletId = resolveWalletArg(undefined, opts.wallet);
+        const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
+        return runCommand({ ...opts, write: true }, () =>
+          bridgeExecCommand(walletId, {
+            fromChain: opts.fromChain,
+            toChain: opts.toChain,
+            fromToken: opts.fromToken,
+            toToken: opts.toToken,
+            amount: opts.amount,
+            idempotencyKey: idemKey,
+          })
+        );
+      })
+  );
+  withCommon(
+    bridge.command('status <tx_hash>').description('Check bridge transaction status')
+      .addHelpText('after', '\nExample:\n  aw bridge status 0xabc... --chain ethereum --json\n')
+      .action((txHash: string, opts: CommonOpts & { chain?: string }) =>
+        runCommand(opts, () => bridgeStatusCommand(txHash, opts))
+      )
+  );
+
+  // ── Market (read-only) ──
+  const market = program.command('market').description('Market data (via OKX)');
+  withCommon(
+    market.command('price').description('Get real-time token price')
+      .requiredOption('--token <token>', 'Token symbol or address')
+      .addHelpText('after', '\nExample:\n  aw market price --token ETH --chain ethereum --json\n')
+      .action((opts: CommonOpts & { token: string; chain?: string }) =>
+        runCommand(opts, () => marketPriceCommand(opts))
+      )
+  );
+  withCommon(
+    market.command('candles').description('Get K-line (OHLCV) data')
+      .requiredOption('--token <token>', 'Token symbol or address')
+      .requiredOption('--interval <bar>', 'Interval (1m,5m,15m,1H,4H,1D)')
+      .option('--limit <n>', 'Number of candles', '100')
+      .addHelpText('after', '\nExample:\n  aw market candles --token ETH --interval 1H --limit 24 --chain ethereum --json\n')
+      .action((opts: CommonOpts & { token: string; interval: string; limit?: string; chain?: string }) =>
+        runCommand(opts, () => marketCandlesCommand(opts))
+      )
+  );
+  withCommon(
+    market.command('trades').description('Get recent trades')
+      .requiredOption('--token <token>', 'Token symbol or address')
+      .option('--limit <n>', 'Number of trades', '50')
+      .addHelpText('after', '\nExample:\n  aw market trades --token ETH --limit 20 --chain ethereum --json\n')
+      .action((opts: CommonOpts & { token: string; limit?: string; chain?: string }) =>
+        runCommand(opts, () => marketTradesCommand(opts))
+      )
+  );
+
+  // ── Token (read-only) ──
+  const token = program.command('token').description('Token discovery (via OKX)');
+  withCommon(
+    token.command('search').description('Search tokens by keyword')
+      .requiredOption('--keyword <keyword>', 'Search keyword')
+      .addHelpText('after', '\nExample:\n  aw token search --keyword USDC --chain ethereum --json\n')
+      .action((opts: CommonOpts & { keyword: string; chain?: string }) =>
+        runCommand(opts, () => tokenSearchCommand(opts))
+      )
+  );
+  withCommon(
+    token.command('info').description('Get token details')
+      .requiredOption('--address <address>', 'Token contract address')
+      .addHelpText('after', '\nExample:\n  aw token info --address 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --chain ethereum --json\n')
+      .action((opts: CommonOpts & { address: string; chain?: string }) =>
+        runCommand(opts, () => tokenInfoCommand(opts))
+      )
+  );
+  withCommon(
+    token.command('trending').description('Get trending tokens')
+      .addHelpText('after', '\nExample:\n  aw token trending --chain ethereum --json\n')
+      .action((opts: CommonOpts & { chain?: string }) =>
+        runCommand(opts, () => tokenTrendingCommand(opts))
+      )
+  );
+  withCommon(
+    token.command('holders').description('Get top token holders')
+      .requiredOption('--address <address>', 'Token contract address or symbol')
+      .addHelpText('after', '\nExample:\n  aw token holders --chain ethereum --address USDC --json\n')
+      .action((opts: CommonOpts & { address: string; chain?: string }) =>
+        runCommand(opts, () => tokenHoldersCommand(opts))
+      )
+  );
+
+  // ── History (on-chain, via OKX) ──
+  const history = program.command('history').description('On-chain transaction history (via OKX)');
+  withCommon(
+    history.command('list').description('List on-chain transactions')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .option('--limit <n>', 'Number of transactions', '50')
+      .addHelpText('after', '\nExample:\n  aw history list --wallet alice --chain ethereum --json\n')
+      .action((opts: CommonOpts & { wallet: string; limit?: string; chain?: string }) =>
+        runCommand(opts, () => historyListCommand(opts))
+      )
+  );
+
+  // ── Perp (Hyperliquid perpetual contracts) ──
+  // Perp commands are Hyperliquid-only. --chain is hidden (silently ignored) like predict commands.
+  const perp = program.command('perp').description('Perpetual contract operations (via Hyperliquid)');
+  withCommonNoChain(
+    perp.command('assets').description('List tradable perpetual assets')
+      .addHelpText('after', '\nExample:\n  aw perp assets --json\n')
+      .action((opts: CommonOpts) => runCommand(opts, () => perpAssetsCommand()))
+  );
+  withCommonNoChain(
+    perp.command('prices').description('Get current mid prices')
+      .option('--asset <asset>', 'Filter by asset symbol (e.g. BTC)')
+      .addHelpText('after', '\nExample:\n  aw perp prices --json\n  aw perp prices --asset BTC --json\n')
+      .action((opts: CommonOpts & { asset?: string }) =>
+        runCommand(opts, () => perpPricesCommand({ asset: opts.asset }))
+      )
+  );
+  withCommonNoChain(
+    perp.command('funding').description('Get funding rates for an asset')
+      .requiredOption('--asset <asset>', 'Asset symbol (e.g. BTC)')
+      .addHelpText('after', '\nExample:\n  aw perp funding --asset BTC --json\n')
+      .action((opts: CommonOpts & { asset: string }) =>
+        runCommand(opts, () => perpFundingCommand({ asset: opts.asset }))
+      )
+  );
+  withCommonNoChain(
+    perp.command('account').description('Account overview (margin, positions, PnL)')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .addHelpText('after', '\nExample:\n  aw perp account --wallet alice --json\n')
+      .action((opts: CommonOpts & { wallet: string }) =>
+        runCommand(opts, () => perpAccountCommand(resolveWalletArg(undefined, opts.wallet)))
+      )
+  );
+  withCommonNoChain(
+    perp.command('positions').description('List current positions')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .addHelpText('after', '\nExample:\n  aw perp positions --wallet alice --json\n')
+      .action((opts: CommonOpts & { wallet: string }) =>
+        runCommand(opts, () => perpPositionsCommand(resolveWalletArg(undefined, opts.wallet)))
+      )
+  );
+  withCommonNoChain(
+    perp.command('orders').description('List open orders')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .addHelpText('after', '\nExample:\n  aw perp orders --wallet alice --json\n')
+      .action((opts: CommonOpts & { wallet: string }) =>
+        runCommand(opts, () => perpOrdersCommand(resolveWalletArg(undefined, opts.wallet)))
+      )
+  );
+  withCommonNoChain(
+    perp.command('open').description('Open a perpetual position')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .requiredOption('--asset <asset>', 'Asset symbol (e.g. BTC, ETH)')
+      .requiredOption('--side <side>', 'Position side: long or short')
+      .requiredOption('--size <n>', 'Position size in base currency')
+      .option('--leverage <n>', 'Leverage (default: 1)')
+      .option('--idempotency-key [key]', 'Idempotency key (auto-generated if omitted)')
+      .option('--dry-run', 'Validate without executing')
+      .addHelpText('after', '\nExample:\n  aw perp open --wallet alice --asset BTC --side long --size 0.01 --leverage 5 --json\n')
+      .action((opts: CommonOpts & { wallet: string; asset: string; side: string; size: string; leverage?: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
+        const walletId = resolveWalletArg(undefined, opts.wallet);
+        const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
+        return runCommand({ ...opts, write: !opts.dryRun }, () =>
+          perpOpenCommand(walletId, {
+            asset: opts.asset,
+            side: opts.side,
+            size: opts.size,
+            leverage: opts.leverage,
+            idempotencyKey: idemKey,
+            dryRun: opts.dryRun,
+          })
+        );
+      })
+  );
+  withCommonNoChain(
+    perp.command('close').description('Close a perpetual position')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .requiredOption('--asset <asset>', 'Asset symbol (e.g. BTC)')
+      .option('--size <n>', 'Size to close (default: full position)')
+      .option('--idempotency-key [key]', 'Idempotency key (auto-generated if omitted)')
+      .option('--dry-run', 'Validate without executing')
+      .addHelpText('after', '\nExample:\n  aw perp close --wallet alice --asset BTC --json\n  aw perp close --wallet alice --asset BTC --size 0.005 --json\n')
+      .action((opts: CommonOpts & { wallet: string; asset: string; size?: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
+        const walletId = resolveWalletArg(undefined, opts.wallet);
+        const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
+        return runCommand({ ...opts, write: !opts.dryRun }, () =>
+          perpCloseCommand(walletId, {
+            asset: opts.asset,
+            size: opts.size,
+            idempotencyKey: idemKey,
+            dryRun: opts.dryRun,
+          })
+        );
+      })
+  );
+  withCommonNoChain(
+    perp.command('cancel').description('Cancel an open order')
+      .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .requiredOption('--asset <asset>', 'Asset symbol')
+      .requiredOption('--order-id <oid>', 'Order ID to cancel')
+      .option('--idempotency-key [key]', 'Idempotency key (auto-generated if omitted)')
+      .addHelpText('after', '\nExample:\n  aw perp cancel --wallet alice --asset BTC --order-id 12345 --json\n')
+      .action((opts: CommonOpts & { wallet: string; asset: string; orderId: string; idempotencyKey?: string | boolean }) => {
+        const walletId = resolveWalletArg(undefined, opts.wallet);
+        const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
+        return runCommand({ ...opts, write: true }, () =>
+          perpCancelCommand(walletId, {
+            asset: opts.asset,
+            orderId: opts.orderId,
+            idempotencyKey: idemKey,
+          })
+        );
+      })
   );
 
   return program;

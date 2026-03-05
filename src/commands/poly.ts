@@ -3,18 +3,65 @@ import { evaluatePolicy } from '../core/policy-engine.js';
 import { isSessionValid } from '../core/session.js';
 import { AppError } from '../core/errors.js';
 import { getPolicy, getWalletById } from '../core/wallet-store.js';
-import { createPendingProviderOperation, dailySpendStats, finalizeProviderOperation, preflightBalanceCheck } from '../core/tx-service.js';
+import { createPendingProviderOperation, dailySpendStats, finalizeProviderOperation, preflightBalanceCheck, walletBalance } from '../core/tx-service.js';
 import { getOperationByIdempotencyKey, isStalePending, reserveIdempotencyKey } from '../util/idempotency.js';
 import { requirePositiveNumber, requirePositiveInt } from '../util/validate.js';
 import { getMasterPassword } from '../util/agent-input.js';
 import { decryptSecretAsBuffer } from '../core/crypto.js';
 import { logAudit } from '../core/audit-service.js';
 import { getPolymarketAdapter } from '../core/polymarket/factory.js';
+import { swapExecCommand } from './swap.js';
 import type { ChainKey } from '../core/chains.js';
 
 /** Polymarket operates on Polygon — always use polygon chain regardless of default. */
 const POLY_CHAIN = 'polygon' as const;
 type PredictOrderResult = { tx_id: string; provider_order_id: string | undefined; provider_status: string; order?: unknown };
+
+/**
+ * Ensure the wallet has enough USDC.e for a Polymarket order.
+ * If USDC.e is insufficient but native USDC covers it, auto-swap via OKX DEX.
+ */
+async function ensureUsdceBalance(walletId: string, amount: number): Promise<void> {
+  const bal = await walletBalance(walletId, POLY_CHAIN);
+  const usdceBalance = Number(bal.balances['USDC.e'] ?? '0');
+  if (usdceBalance >= amount) return; // enough USDC.e
+
+  // Check native USDC
+  const usdcBalance = Number(bal.balances['USDC'] ?? '0');
+  const deficit = amount - usdceBalance;
+  // Add 0.5% buffer for slippage
+  const swapAmount = Math.ceil(deficit * 1.005 * 1e6) / 1e6;
+
+  if (usdcBalance < swapAmount) {
+    throw new AppError(
+      'ERR_INSUFFICIENT_FUNDS',
+      `Insufficient USDC.e: need ${amount}, have ${usdceBalance.toFixed(6)}. ` +
+      `Native USDC balance (${usdcBalance.toFixed(6)}) also insufficient to cover the deficit. ` +
+      `Deposit USDC via \`aw predict bridge-deposit\` or bridge from another chain.`
+    );
+  }
+
+  // Auto-swap USDC → USDC.e via OKX DEX
+  logAudit({
+    wallet_id: walletId,
+    action: 'predict.auto_swap',
+    request: { from: 'USDC', to: 'USDC.e', amount: swapAmount, reason: 'insufficient USDC.e for Polymarket order' },
+    decision: 'ok',
+    chain_name: 'Polygon',
+    chain_id: 137,
+  });
+
+  await swapExecCommand(walletId, {
+    chain: 'polygon',
+    from: 'USDC',
+    to: 'USDC.e',
+    amount: String(swapAmount),
+    idempotencyKey: `poly-autoswap-${Date.now()}`,
+  });
+
+  // Re-check after swap
+  await preflightBalanceCheck(walletId, 'USDC.e', amount, POLY_CHAIN);
+}
 
 export async function polySearchCommand(q: string, limit: number): Promise<{ markets: unknown }> {
   assertInitialized();
@@ -108,8 +155,8 @@ export async function polyBuyCommand(
   }
   const txId = atomicResult.txId;
 
-  // Preflight: verify USDC.e (bridged) balance — Polymarket uses USDC.e, not native USDC
-  await preflightBalanceCheck(walletId, 'USDC.e', amount, POLY_CHAIN);
+  // Preflight: verify USDC.e balance — auto-swap from USDC if needed
+  await ensureUsdceBalance(walletId, amount);
 
   const wallet = getWalletById(walletId);
   const password = await getMasterPassword('Master password for polymarket signing: ');

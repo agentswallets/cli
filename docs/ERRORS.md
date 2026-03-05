@@ -40,9 +40,8 @@ All error codes use the `ERR_` prefix for consistent machine parsing.
 |------|--------------|
 | `ERR_RPC_UNAVAILABLE` | Check network or set `AW_RPC_URL`. |
 | `ERR_TX_FAILED` | Transaction reverted on-chain. Check params and retry. |
-| `ERR_POLYMARKET_CLI_NOT_FOUND` | Install polymarket-cli and ensure it is in PATH. |
-| `ERR_POLYMARKET_FAILED` | Polymarket CLI returned an error. Check logs. |
-| `ERR_POLYMARKET_TIMEOUT` | Polymarket CLI timed out. Retry. |
+| `ERR_POLYMARKET_FAILED` | Polymarket SDK/API returned an error. Check logs. |
+| `ERR_POLYMARKET_TIMEOUT` | Polymarket API request timed out. Retry. |
 | `ERR_INTERNAL` | Unexpected internal error. |
 
 ## JSON error envelope

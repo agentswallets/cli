@@ -305,3 +305,27 @@ describe('Fix 7: human-readable output', () => {
     expect(output).toContain('policy.allowed_addresses: (none)');
   });
 });
+
+// ===== Fix: perp commands hide --chain (silently ignored, like predict) =====
+describe('Fix: perp hides --chain', () => {
+  it('perp subcommands have hidden --chain option (same as predict)', async () => {
+    const { buildCli } = await import('../src/cli.js');
+    const cli = buildCli();
+    const perpCmd = cli.commands.find(c => c.name() === 'perp');
+    expect(perpCmd?.description()).toContain('Hyperliquid');
+    for (const sub of perpCmd!.commands) {
+      const chainOpt = sub.options.find((o: { long?: string }) => o.long === '--chain');
+      expect(chainOpt, `perp ${sub.name()} should have --chain option`).toBeDefined();
+      expect(chainOpt!.hidden, `perp ${sub.name()} --chain should be hidden`).toBe(true);
+    }
+  });
+
+  it('wallet info description mentions wallet required', async () => {
+    const { buildCli } = await import('../src/cli.js');
+    const cli = buildCli();
+    const info = cli.commands
+      .find(c => c.name() === 'wallet')
+      ?.commands.find(c => c.name() === 'info');
+    expect(info?.description()).toContain('wallet required');
+  });
+});

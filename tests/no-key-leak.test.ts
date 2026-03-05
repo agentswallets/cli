@@ -1,5 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
-import { redactSecrets } from '../src/util/redact.js';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { redactSecrets, redactUrl } from '../src/util/redact.js';
+
+describe('no-key-leak: embedded-keys.ts source safety', () => {
+  it('OKX embedded-keys should only contain empty string exports', () => {
+    const filePath = resolve(__dirname, '../src/core/okx/embedded-keys.ts');
+    const content = readFileSync(filePath, 'utf8');
+
+    expect(content).toContain("EMBEDDED_OKX_API_KEY = ''");
+    expect(content).toContain("EMBEDDED_OKX_SECRET_KEY = ''");
+    expect(content).toContain("EMBEDDED_OKX_PASSPHRASE = ''");
+
+    const nonEmptyStrings = content.match(/= '([^']+)'/g);
+    expect(nonEmptyStrings).toBeNull();
+  });
+
+  it('Polymarket embedded-keys should only contain empty string exports', () => {
+    const filePath = resolve(__dirname, '../src/core/polymarket/embedded-keys.ts');
+    const content = readFileSync(filePath, 'utf8');
+
+    expect(content).toContain("EMBEDDED_POLY_BUILDER_API_KEY = ''");
+    expect(content).toContain("EMBEDDED_POLY_BUILDER_SECRET = ''");
+    expect(content).toContain("EMBEDDED_POLY_BUILDER_PASSPHRASE = ''");
+
+    const nonEmptyStrings = content.match(/= '([^']+)'/g);
+    expect(nonEmptyStrings).toBeNull();
+  });
+});
 
 describe('no-key-leak: redactSecrets coverage', () => {
   it('redacts private_key field value in JSON', () => {
@@ -132,5 +160,29 @@ describe('no-key-leak: walletExportKeyCommand return value redaction', () => {
     // Other fields should survive
     expect(redacted).toContain('w_test');
     expect(redacted).toContain('Do not log');
+  });
+});
+
+describe('no-key-leak: redactUrl multi-RPC', () => {
+  it('redacts API key in single URL path', () => {
+    const url = 'https://eth-mainnet.g.alchemy.com/v2/abc123secretkey';
+    const redacted = redactUrl(url);
+    expect(redacted).not.toContain('abc123secretkey');
+    expect(redacted).toContain('/***');
+  });
+
+  it('redacts API keys in all segments of comma-separated URLs', () => {
+    const url = 'https://eth-mainnet.g.alchemy.com/v2/key1secret,https://polygon-mainnet.g.alchemy.com/v2/key2secret';
+    const redacted = redactUrl(url);
+    expect(redacted).not.toContain('key1secret');
+    expect(redacted).not.toContain('key2secret');
+    expect(redacted.split(',').every((u: string) => u.includes('/***'))).toBe(true);
+  });
+
+  it('redacts query param keys in comma-separated URLs', () => {
+    const url = 'https://rpc1.example.com?apikey=secret1,https://rpc2.example.com?apikey=secret2';
+    const redacted = redactUrl(url);
+    expect(redacted).not.toContain('secret1');
+    expect(redacted).not.toContain('secret2');
   });
 });

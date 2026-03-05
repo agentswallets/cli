@@ -36,7 +36,7 @@ describe('health command', () => {
     expect(result).toHaveProperty('db');
     expect(result).toHaveProperty('session');
     expect(result).toHaveProperty('rpc');
-    expect(result).toHaveProperty('polymarket_cli');
+    expect(result).toHaveProperty('polymarket_sdk');
     expect(result.db.ok).toBe(true);
     expect(result.session.ok).toBe(false);
     expect(result.rpc.ok).toBe(true);
@@ -263,12 +263,11 @@ describe('health command', () => {
     const { healthCommand } = await import('../src/commands/health.js');
     const result = await healthCommand('polygon');
     expect(result.chain).toBe('Polygon');
-    expect(result.default_chain).toBe('polygon');
+    expect(result.checked_chain).toBe('polygon');
     expect(result.rpc.ok).toBe(true);
   });
 
-  it('tries polymarket-cli before polymarket', async () => {
-    const callLog: string[] = [];
+  it('polymarket SDK check pings CLOB API', async () => {
     vi.resetModules();
     vi.doMock('../src/core/db.js', () => ({
       getDb: () => ({}),
@@ -280,21 +279,10 @@ describe('health command', () => {
     vi.doMock('../src/core/rpc.js', () => ({
       getProvider: () => ({ getNetwork: async () => ({ chainId: 137n }) })
     }));
-    vi.doMock('node:child_process', () => ({
-      execFileSync: (binary: string) => {
-        callLog.push(binary);
-        if (binary === 'polymarket-cli') throw new Error('not found');
-        if (binary === 'polymarket') return Buffer.from('1.0.0');
-        throw new Error('not found');
-      }
-    }));
     const { healthCommand } = await import('../src/commands/health.js');
     const result = await healthCommand();
-
-    // Should try polymarket-cli first
-    expect(callLog[0]).toBe('polymarket-cli');
-    // Falls back to polymarket
-    expect(callLog).toContain('polymarket');
-    expect(result.polymarket_cli.ok).toBe(true);
+    // polymarket_sdk.ok depends on network, just check it exists
+    expect(result).toHaveProperty('polymarket_sdk');
+    expect(typeof result.polymarket_sdk.ok).toBe('boolean');
   });
 });

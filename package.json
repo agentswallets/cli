@@ -1,6 +1,6 @@
 {
   "name": "agentswallets",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Secure local wallet CLI for AI agents on Polygon",
   "type": "module",
   "main": "dist/index.js",
@@ -47,6 +47,10 @@
   ],
   "license": "ISC",
   "dependencies": {
+    "@nktkas/hyperliquid": "^0.32.1",
+    "@polymarket/builder-relayer-client": "^0.0.8",
+    "@polymarket/builder-signing-sdk": "^0.0.8",
+    "@polymarket/clob-client": "^5.7.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "better-sqlite3": "^12.6.2",

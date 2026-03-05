@@ -14,7 +14,6 @@ describe('exit code mapping', () => {
 
   it('maps system errors to 2', () => {
     expect(exitCodeForError('ERR_RPC_UNAVAILABLE')).toBe(2);
-    expect(exitCodeForError('ERR_POLYMARKET_CLI_NOT_FOUND')).toBe(2);
     expect(exitCodeForError('ERR_POLYMARKET_FAILED')).toBe(2);
   });
 });

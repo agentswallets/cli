@@ -22,7 +22,6 @@ export type ChainConfig = {
   tokens: TokenInfo[];
   gasEstimateNative: number;
   gasEstimateErc20: number;
-  coinpaprikaNativeId: string;
   explorerTxUrl: string;
 };
 
@@ -42,7 +41,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     ],
     gasEstimateNative: 0.001,
     gasEstimateErc20: 0.0005,
-    coinpaprikaNativeId: 'eth-ethereum',
+
     explorerTxUrl: 'https://etherscan.io/tx/',
   },
   bnb: {
@@ -60,7 +59,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     ],
     gasEstimateNative: 0.0005,
     gasEstimateErc20: 0.0003,
-    coinpaprikaNativeId: 'bnb-binance-coin',
+
     explorerTxUrl: 'https://bscscan.com/tx/',
   },
   base: {
@@ -77,7 +76,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     ],
     gasEstimateNative: 0.0001,
     gasEstimateErc20: 0.00005,
-    coinpaprikaNativeId: 'eth-ethereum',
+
     explorerTxUrl: 'https://basescan.org/tx/',
   },
   polygon: {
@@ -96,7 +95,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     ],
     gasEstimateNative: 0.01,
     gasEstimateErc20: 0.005,
-    coinpaprikaNativeId: 'pol-polygon-ecosystem-token',
+
     explorerTxUrl: 'https://polygonscan.com/tx/',
   },
   arbitrum: {
@@ -114,7 +113,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     ],
     gasEstimateNative: 0.0001,
     gasEstimateErc20: 0.00005,
-    coinpaprikaNativeId: 'eth-ethereum',
+
     explorerTxUrl: 'https://arbiscan.io/tx/',
   },
   solana: {
@@ -132,7 +131,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     ],
     gasEstimateNative: 0.000005,
     gasEstimateErc20: 0.002,
-    coinpaprikaNativeId: 'sol-solana',
+
     explorerTxUrl: 'https://solscan.io/tx/',
   },
 };

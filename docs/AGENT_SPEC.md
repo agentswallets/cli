@@ -212,13 +212,11 @@ Output fields:
 - `session.ok` — valid unlock session exists
 - `rpc.ok` — RPC endpoint reachable and on correct chain
 - `rpc.url` — RPC endpoint (API keys redacted)
-- `polymarket_cli.ok` — polymarket CLI binary found in PATH
+- `polymarket_sdk.ok` — Polymarket CLOB API reachable
 
 The `rpc.url` field always redacts API keys (e.g. `/v2/***`). Error messages are sanitized via `safeSummary()` to prevent secret leakage.
 
 Set `AW_HEALTH_VERBOSE=1` to include full diagnostic details in error responses.
-
-Polymarket CLI detection tries `polymarket-cli` first, then `polymarket` (matching the runtime adapter).
 
 ## RPC security
 
@@ -356,5 +354,5 @@ aw lock --json
 | `ERR_TOKEN_NOT_ALLOWED` | 1 | `aw policy set <name> --allowed-tokens POL,USDC,USDC.e` |
 | `ERR_ADDRESS_NOT_ALLOWED` | 1 | `aw policy set <name> --allowed-addresses <addr>` |
 | `ERR_RPC_UNAVAILABLE` | 2 | Check network, set `AW_RPC_URL`, retry |
-| `ERR_POLYMARKET_CLI_NOT_FOUND` | 2 | Install polymarket-cli |
+| `ERR_POLYMARKET_FAILED` | 2 | Polymarket SDK/API error — check logs and retry |
 | `ERR_INVALID_PARAMS` | 1 | Check command arguments |

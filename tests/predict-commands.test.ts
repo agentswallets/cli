@@ -52,7 +52,12 @@ vi.mock('../src/core/tx-service.js', () => ({
   createPendingProviderOperation: vi.fn(() => 'tx_123'),
   finalizeProviderOperation: vi.fn(),
   dailySpendStats: vi.fn(() => ({ todaySpent: 0, todayTxCount: 0 })),
-  preflightBalanceCheck: vi.fn(async () => {})
+  preflightBalanceCheck: vi.fn(async () => {}),
+  walletBalance: vi.fn(async () => ({ balances: { 'USDC.e': '1000', 'USDC': '500' } }))
+}));
+
+vi.mock('../src/commands/swap.js', () => ({
+  swapExecCommand: vi.fn(async () => ({ tx_hash: '0xswap' }))
 }));
 
 vi.mock('../src/util/idempotency.js', () => ({

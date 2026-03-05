@@ -3,8 +3,14 @@ export function summarize(text: string, max = 500): string {
   return `${text.slice(0, max)}...`;
 }
 
-/** Redact path segments and query params that look like API keys in URLs. */
+/** Redact path segments and query params that look like API keys in URLs.
+ *  Handles comma-separated multi-RPC strings (e.g. "url1,url2,url3"). */
 export function redactUrl(url: string): string {
+  // Handle comma-separated URLs (common for multi-RPC configs).
+  // Only split on commas followed by http(s) to avoid breaking query params with commas.
+  if (/,https?:\/\//.test(url)) {
+    return url.split(/,(?=https?:\/\/)/).map(u => redactUrl(u.trim())).join(',');
+  }
   try {
     const u = new URL(url);
     // Redact path segments that look like API keys (e.g. /v2/<hex-or-alnum-key>)

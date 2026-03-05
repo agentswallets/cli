@@ -1,0 +1,3 @@
+export const EMBEDDED_POLY_BUILDER_API_KEY = '';
+export const EMBEDDED_POLY_BUILDER_SECRET = '';
+export const EMBEDDED_POLY_BUILDER_PASSPHRASE = '';

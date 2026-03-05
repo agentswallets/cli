@@ -130,7 +130,7 @@ aw policy set --wallet alice \
 
 ### Prediction markets (Polymarket)
 
-Prediction commands operate on Polygon only. Requires [polymarket-cli](https://github.com/Polymarket/cli) installed separately.
+Prediction commands operate on Polygon only. Uses the Polymarket CLOB SDK (bundled, no external binary needed). Trades use USDC.e on Polygon; native USDC is auto-swapped via OKX DEX when needed.
 
 ```bash
 aw predict markets -q "bitcoin" --limit 10

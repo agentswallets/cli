@@ -27,7 +27,7 @@ describe('chains registry', () => {
       expect(chain.tokens.length).toBeGreaterThan(0);
       expect(chain.gasEstimateNative).toBeGreaterThan(0);
       expect(chain.gasEstimateErc20).toBeGreaterThan(0);
-      expect(chain.coinpaprikaNativeId).toBeTruthy();
+
       expect(chain.explorerTxUrl).toMatch(/^https:\/\//);
     }
   });
