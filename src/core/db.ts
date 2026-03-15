@@ -90,6 +90,14 @@ function migrateSchema(db: Database.Database): void {
     }
   }
 
+  // --- security_blacklist migration ---
+  db.exec(`CREATE TABLE IF NOT EXISTS security_blacklist (
+    address TEXT PRIMARY KEY,
+    chain TEXT,
+    reason TEXT,
+    added_at TEXT NOT NULL
+  )`);
+
   // --- settings migration: ensure existing v0.2 users keep polygon as default ---
   try {
     const hasInit = db.prepare("SELECT value FROM settings WHERE key='initialized_at'").get();

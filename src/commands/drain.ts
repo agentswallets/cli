@@ -9,6 +9,7 @@ import { type ChainKey, getChain, resolveChainKey } from '../core/chains.js';
 import { logAudit } from '../core/audit-service.js';
 import { requireChainAddress } from '../util/validate.js';
 import { txSendCommand } from './tx.js';
+import { securityCheck } from '../security/guard.js';
 
 type DrainTokenResult = {
   token: string;
@@ -22,7 +23,7 @@ type DrainTokenResult = {
 
 export async function walletDrainCommand(
   walletId: string,
-  opts: { to: string; idempotencyKey?: string; dryRun?: boolean; chain?: string }
+  opts: { to: string; idempotencyKey?: string; dryRun?: boolean; chain?: string; force?: boolean; yes?: boolean }
 ): Promise<{
   name: string;
   address: string;
@@ -42,6 +43,14 @@ export async function walletDrainCommand(
   const erc20Tokens = chain.tokens.filter(t => t.address !== null);
   const nativeToken = chain.tokens.find(t => t.address === null)!;
   const nativeUnit = 10 ** nativeToken.decimals;
+
+  // Security check (skip in dry-run) — drain is always a red line
+  if (!opts.dryRun) {
+    await securityCheck(
+      { walletId, action: 'wallet.drain', toAddress: to, chain: chain.name },
+      { yes: opts.yes, force: opts.force }
+    );
+  }
 
   const results: DrainTokenResult[] = [];
 

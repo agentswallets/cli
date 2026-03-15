@@ -10,13 +10,14 @@ import { decryptSecretAsBuffer } from '../core/crypto.js';
 import { getMasterPassword } from '../util/agent-input.js';
 import { resolveWallet } from '../core/wallet-store.js';
 import { reserveIdempotencyKey, getOperationByIdempotencyKey } from '../util/idempotency.js';
-import { createPendingProviderOperation, finalizeProviderOperation, dailySpendStats } from '../core/tx-service.js';
+import { createPendingProviderOperation, finalizeProviderOperation, dailySpendStats, walletBalance } from '../core/tx-service.js';
 import { requirePositiveNumber } from '../util/validate.js';
 import { getOkxCredentials } from '../core/okx/client.js';
 import { chainKeyToOkxChainIndex, resolveTokenAddress } from '../core/okx/token-resolver.js';
 import { getSwapQuote, getSwapApproval, getSupportedSwapChains } from '../core/okx/swap.js';
 import { executeSwap } from '../core/okx/swap-executor.js';
 import { NATIVE_TOKEN_ADDRESS } from '../core/okx/constants.js';
+import { securityCheck } from '../security/guard.js';
 
 /** Convert human-readable amount to smallest unit string. */
 function toSmallestUnit(amount: number, decimals: number): string {
@@ -119,6 +120,8 @@ export async function swapExecCommand(
     slippage?: string;
     idempotencyKey: string;
     dryRun?: boolean;
+    force?: boolean;
+    yes?: boolean;
   }
 ): Promise<{
   tx_id: string;
@@ -146,6 +149,25 @@ export async function swapExecCommand(
   const amount = requirePositiveNumber(opts.amount, 'amount');
   const amountSmallest = toSmallestUnit(amount, fromToken.decimals);
   const slippage = opts.slippage || '0.5';
+
+  // Security check (skip in dry-run)
+  if (!opts.dryRun) {
+    // Pre-fetch balance for ALL_BALANCE_SWAP red line check
+    let tokenBalance = 0;
+    try {
+      const bal = await walletBalance(walletId, chainKey);
+      tokenBalance = Number(bal.balances[fromToken.symbol] ?? '0');
+    } catch { /* best effort — skip balance check if RPC fails */ }
+
+    await securityCheck(
+      { walletId, action: 'swap.exec', amount, token: fromToken.symbol, chain: chain.name, slippage: opts.slippage ? parseFloat(opts.slippage) : undefined },
+      {
+        yes: opts.yes,
+        force: opts.force,
+        getBalance: () => tokenBalance,
+      }
+    );
+  }
 
   if (opts.dryRun) {
     return {

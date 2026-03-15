@@ -29,6 +29,11 @@ export type AppErrorCode =
   | 'ERR_HL_INVALID_ASSET'
   | 'ERR_HL_INSUFFICIENT_MARGIN'
   | 'ERR_HL_BUILDER_FEE_FAILED'
+  | 'ERR_RED_LINE_BLOCKED'
+  | 'ERR_RATE_LIMITED'
+  | 'ERR_BLACKLISTED_ADDRESS'
+  | 'ERR_BASELINE_TAMPERED'
+  | 'ERR_PREFLIGHT_FAILED'
   | 'ERR_INTERNAL';
 
 export type JsonSuccess<T> = { ok: true; data: T; error: null; meta: { request_id: string } };

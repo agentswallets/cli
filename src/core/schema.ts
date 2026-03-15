@@ -85,4 +85,11 @@ CREATE TABLE IF NOT EXISTS operations (
 
 CREATE INDEX IF NOT EXISTS idx_ops_wallet_token_date ON operations(wallet_id, token, created_at);
 CREATE INDEX IF NOT EXISTS idx_ops_wallet_date ON operations(wallet_id, created_at);
+
+CREATE TABLE IF NOT EXISTS security_blacklist (
+  address TEXT PRIMARY KEY,
+  chain TEXT,
+  reason TEXT,
+  added_at TEXT NOT NULL
+);
 `;

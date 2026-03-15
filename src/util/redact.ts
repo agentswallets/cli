@@ -34,6 +34,11 @@ export function redactUrl(url: string): string {
 /** Sensitive JSON field names — values of these keys are redacted. */
 const SENSITIVE_FIELD_RE = /(?:private_key|secret|passphrase|mnemonic|seed)/i;
 
+/** Match standalone hex private keys: 0x + 64 hex chars NOT inside a JSON key-value context.
+ *  We only redact these when preceded by a sensitive field name to avoid false positives
+ *  on tx hashes, conditionIds, and other 0x-prefixed 32-byte values. */
+const HEX_PRIVKEY_IN_CONTEXT_RE = /(private.key|secret|mnemonic|seed)\s*[:=]\s*["']?(0x[a-fA-F0-9]{64})["']?/gi;
+
 export function redactSecrets(text: string): string {
   return text
     // Context-aware: redact values of sensitive JSON fields (e.g. "private_key":"0xabc...")
@@ -45,6 +50,8 @@ export function redactSecrets(text: string): string {
     })
     // Env var assignment pattern: PRIVATE_KEY=xxx / POLYMARKET_PRIVATE_KEY=xxx
     .replace(/(PRIVATE_KEY|POLYMARKET_PRIVATE_KEY)\s*[:=]\s*["']?[^"'\s]+["']?/gi, '$1=[REDACTED]')
+    // Hex private keys in context (e.g. private_key=0x... or secret: 0x...)
+    .replace(HEX_PRIVKEY_IN_CONTEXT_RE, '$1=[REDACTED]')
     // URL redaction (API keys in path/query)
     .replace(/https?:\/\/[^\s"']+/g, (url) => redactUrl(url));
 }

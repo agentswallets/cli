@@ -10,11 +10,12 @@ import { requireAddress, requireChainAddress, requirePositiveNumber } from '../u
 import { getMasterPassword } from '../util/agent-input.js';
 import { logAudit } from '../core/audit-service.js';
 import { type ChainKey, getChain, resolveChainKey, resolveToken } from '../core/chains.js';
+import { securityCheck } from '../security/guard.js';
 
 export async function txSendCommand(
   walletId: string,
-  opts: { to: string; token: string; amount: string; idempotencyKey: string; dryRun?: boolean; chain?: string }
-): Promise<{ tx_id: string; tx_hash: string | null; status: string; token: string; amount: string; to: string; chain?: string; explorer_url?: string; dry_run?: boolean }> {
+  opts: { to: string; token: string; amount: string; idempotencyKey: string; dryRun?: boolean; chain?: string; force?: boolean; yes?: boolean }
+): Promise<{ tx_id: string; tx_hash: string | null; status: string; token: string; amount: string; to: string; chain?: string; explorer_url?: string; dry_run?: boolean; warnings?: unknown[] }> {
   assertInitialized();
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
 
@@ -27,6 +28,14 @@ export async function txSendCommand(
 
   const to = requireChainAddress(opts.to, chain.chainType);
   const amount = requirePositiveNumber(opts.amount, 'amount');
+
+  // Security check (skip in dry-run)
+  if (!opts.dryRun) {
+    await securityCheck(
+      { walletId, action: 'tx.send', amount, token, toAddress: to, chain: chain.name },
+      { yes: opts.yes, force: opts.force }
+    );
+  }
 
   // Dry-run: validate policy + preflight only, no DB writes or broadcast
   if (opts.dryRun) {

@@ -14,6 +14,7 @@ import { walletBalance } from '../core/tx-service.js';
 import { getWalletById, insertWallet, listWallets, listWalletsInternal } from '../core/wallet-store.js';
 import { confirmAction, getMasterPassword } from '../util/agent-input.js';
 import { logAudit } from '../core/audit-service.js';
+import { securityCheck } from '../security/guard.js';
 
 const WALLET_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
@@ -336,7 +337,7 @@ export async function walletBalanceAllWalletsAllChainsCommand(): Promise<{
   return { wallets };
 }
 
-export async function walletExportKeyCommand(walletId: string, yes = false, dangerExport = false): Promise<{
+export async function walletExportKeyCommand(walletId: string, yes = false, dangerExport = false, force = false): Promise<{
   name: string;
   address: string;
   key_type: string;
@@ -350,6 +351,12 @@ export async function walletExportKeyCommand(walletId: string, yes = false, dang
   if (allowExport !== '1') {
     throw new AppError('ERR_INVALID_PARAMS', 'export-key requires AW_ALLOW_EXPORT=1 environment variable');
   }
+  // Security check
+  await securityCheck(
+    { walletId, action: 'wallet.export_key' },
+    { yes, force }
+  );
+
   // Gate 2: CLI flag — explicit per-invocation intent
   if (!dangerExport) {
     throw new AppError('ERR_INVALID_PARAMS', 'export-key requires --danger-export flag to confirm.');

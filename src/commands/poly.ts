@@ -12,6 +12,7 @@ import { logAudit } from '../core/audit-service.js';
 import { getPolymarketAdapter } from '../core/polymarket/factory.js';
 import { swapExecCommand } from './swap.js';
 import type { ChainKey } from '../core/chains.js';
+import { securityCheck } from '../security/guard.js';
 
 /** Polymarket operates on Polygon — always use polygon chain regardless of default. */
 const POLY_CHAIN = 'polygon' as const;
@@ -76,7 +77,7 @@ export async function polySearchCommand(q: string, limit: number): Promise<{ mar
 
 export async function polyBuyCommand(
   walletId: string,
-  opts: { market: string; outcome: string; size: string; price: string; idempotencyKey: string; dryRun?: boolean }
+  opts: { market: string; outcome: string; size: string; price: string; idempotencyKey: string; dryRun?: boolean; force?: boolean; yes?: boolean }
 ): Promise<PredictOrderResult | (PredictOrderResult & { dry_run: true })> {
   assertInitialized();
 
@@ -86,6 +87,14 @@ export async function polyBuyCommand(
   const size = requirePositiveNumber(opts.size, 'size');
   const price = requirePositiveNumber(opts.price, 'price');
   const amount = Math.round(size * price * 1e6) / 1e6;
+
+  // Security check (skip in dry-run)
+  if (!opts.dryRun) {
+    await securityCheck(
+      { walletId, action: 'poly.buy', amount },
+      { yes: opts.yes, force: opts.force }
+    );
+  }
 
   // Dry-run: validate policy only, no DB writes or external calls
   if (opts.dryRun) {
@@ -201,12 +210,20 @@ export async function polyBuyCommand(
 
 export async function polySellCommand(
   walletId: string,
-  opts: { position: string; size: string; idempotencyKey: string; dryRun?: boolean }
+  opts: { position: string; size: string; idempotencyKey: string; dryRun?: boolean; force?: boolean; yes?: boolean }
 ): Promise<PredictOrderResult | (PredictOrderResult & { dry_run: true })> {
   assertInitialized();
 
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
   const size = requirePositiveNumber(opts.size, 'size');
+
+  // Security check (skip in dry-run)
+  if (!opts.dryRun) {
+    await securityCheck(
+      { walletId, action: 'poly.sell', amount: size },
+      { yes: opts.yes, force: opts.force }
+    );
+  }
 
   // Dry-run: validate policy only, no DB writes or external calls
   if (opts.dryRun) {
@@ -341,10 +358,11 @@ export async function polyOrdersCommand(walletId: string): Promise<{ orders: unk
   }
 }
 
-export async function polyCancelCommand(walletId: string, orderId: string): Promise<{ cancelled: true } & Record<string, unknown>> {
+export async function polyCancelCommand(walletId: string, orderId: string, opts?: { force?: boolean; yes?: boolean }): Promise<{ cancelled: true } & Record<string, unknown>> {
   assertInitialized();
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
   if (!orderId) throw new AppError('ERR_INVALID_PARAMS', '--order-id is required');
+  await securityCheck({ walletId, action: 'poly.cancel' }, { yes: opts?.yes, force: opts?.force });
   const wallet = getWalletById(walletId);
   const password = await getMasterPassword('Master password for polymarket cancel: ');
   const adapter = getPolymarketAdapter();
@@ -376,9 +394,10 @@ export async function polyApproveCheckCommand(walletId: string): Promise<{ appro
   }
 }
 
-export async function polyApproveSetCommand(walletId: string): Promise<{ approved: true } & Record<string, unknown>> {
+export async function polyApproveSetCommand(walletId: string, opts?: { force?: boolean; yes?: boolean }): Promise<{ approved: true } & Record<string, unknown>> {
   assertInitialized();
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
+  await securityCheck({ walletId, action: 'poly.approve_set' }, { yes: opts?.yes, force: opts?.force });
   const wallet = getWalletById(walletId);
   const password = await getMasterPassword('Master password for polymarket approve set: ');
   const adapter = getPolymarketAdapter();
@@ -393,9 +412,10 @@ export async function polyApproveSetCommand(walletId: string): Promise<{ approve
   }
 }
 
-export async function polyUpdateBalanceCommand(walletId: string): Promise<{ updated: true } & Record<string, unknown>> {
+export async function polyUpdateBalanceCommand(walletId: string, opts?: { force?: boolean; yes?: boolean }): Promise<{ updated: true } & Record<string, unknown>> {
   assertInitialized();
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
+  await securityCheck({ walletId, action: 'poly.update_balance' }, { yes: opts?.yes, force: opts?.force });
   const wallet = getWalletById(walletId);
   const password = await getMasterPassword('Master password for polymarket update-balance: ');
   const adapter = getPolymarketAdapter();
@@ -412,12 +432,13 @@ export async function polyUpdateBalanceCommand(walletId: string): Promise<{ upda
 
 export async function polyCtfSplitCommand(
   walletId: string,
-  opts: { condition: string; amount: string }
+  opts: { condition: string; amount: string; force?: boolean; yes?: boolean }
 ): Promise<{ split: true } & Record<string, unknown>> {
   assertInitialized();
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
   if (!opts.condition) throw new AppError('ERR_INVALID_PARAMS', '--condition is required');
   const amount = requirePositiveNumber(opts.amount, 'amount');
+  await securityCheck({ walletId, action: 'poly.ctf_split', amount }, { yes: opts.yes, force: opts.force });
   const wallet = getWalletById(walletId);
   const password = await getMasterPassword('Master password for CTF split: ');
   const adapter = getPolymarketAdapter();
@@ -434,12 +455,13 @@ export async function polyCtfSplitCommand(
 
 export async function polyCtfMergeCommand(
   walletId: string,
-  opts: { condition: string; amount: string }
+  opts: { condition: string; amount: string; force?: boolean; yes?: boolean }
 ): Promise<{ merged: true } & Record<string, unknown>> {
   assertInitialized();
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
   if (!opts.condition) throw new AppError('ERR_INVALID_PARAMS', '--condition is required');
   const amount = requirePositiveNumber(opts.amount, 'amount');
+  await securityCheck({ walletId, action: 'poly.ctf_merge', amount }, { yes: opts.yes, force: opts.force });
   const wallet = getWalletById(walletId);
   const password = await getMasterPassword('Master password for CTF merge: ');
   const adapter = getPolymarketAdapter();
@@ -456,11 +478,12 @@ export async function polyCtfMergeCommand(
 
 export async function polyCtfRedeemCommand(
   walletId: string,
-  opts: { condition: string }
+  opts: { condition: string; force?: boolean; yes?: boolean }
 ): Promise<{ redeemed: true } & Record<string, unknown>> {
   assertInitialized();
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
   if (!opts.condition) throw new AppError('ERR_INVALID_PARAMS', '--condition is required');
+  await securityCheck({ walletId, action: 'poly.ctf_redeem' }, { yes: opts.yes, force: opts.force });
   const wallet = getWalletById(walletId);
   const password = await getMasterPassword('Master password for CTF redeem: ');
   const adapter = getPolymarketAdapter();

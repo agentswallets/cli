@@ -5,8 +5,9 @@ import { requireAddress, requirePositiveNumber, requirePositiveInt } from '../ut
 import { logAudit } from '../core/audit-service.js';
 import { AppError } from '../core/errors.js';
 import type { PolicyConfig } from '../core/types.js';
+import { securityCheck } from '../security/guard.js';
 
-export function policySetCommand(
+export async function policySetCommand(
   walletId: string,
   opts: {
     limitDaily?: string;
@@ -15,10 +16,19 @@ export function policySetCommand(
     allowedTokens?: string;
     allowedAddresses?: string;
     requireApprovalAbove?: string;
+    force?: boolean;
+    yes?: boolean;
   }
-): { name: string; address: string; policy: PolicyConfig } {
+): Promise<{ name: string; address: string; policy: PolicyConfig }> {
   assertInitialized();
   if (!isSessionValid()) throw new AppError('ERR_NEED_UNLOCK', 'This command requires an unlocked session. Run `aw unlock`.');
+
+  // Security check — policy changes are a red line
+  await securityCheck(
+    { walletId, action: 'policy.set' },
+    { yes: opts.yes, force: opts.force }
+  );
+
   const wallet = getWalletById(walletId);
   const existing = getPolicy(walletId);
 

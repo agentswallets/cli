@@ -8,12 +8,13 @@ import { logAudit } from '../core/audit-service.js';
 import { decryptSecretAsBuffer } from '../core/crypto.js';
 import { getMasterPassword } from '../util/agent-input.js';
 import { reserveIdempotencyKey, getOperationByIdempotencyKey } from '../util/idempotency.js';
-import { createPendingProviderOperation, finalizeProviderOperation, dailySpendStats } from '../core/tx-service.js';
+import { createPendingProviderOperation, finalizeProviderOperation, dailySpendStats, walletBalance } from '../core/tx-service.js';
 import { requirePositiveNumber } from '../util/validate.js';
 import { getOkxCredentials } from '../core/okx/client.js';
 import { chainKeyToOkxChainIndex, resolveTokenAddress } from '../core/okx/token-resolver.js';
 import { getBridgeTx, getSupportedBridgeChains, getBridgeQuote, getBridgeStatus } from '../core/okx/bridge.js';
 import { executeBridge } from '../core/okx/swap-executor.js';
+import { securityCheck } from '../security/guard.js';
 
 /** Convert human-readable amount to smallest unit string. */
 function toSmallestUnit(amount: number, decimals: number): string {
@@ -119,6 +120,8 @@ export async function bridgeExecCommand(
     toToken: string;
     amount: string;
     idempotencyKey: string;
+    force?: boolean;
+    yes?: boolean;
   }
 ): Promise<{
   tx_id: string;
@@ -147,6 +150,18 @@ export async function bridgeExecCommand(
   const toToken = resolveTokenAddress(toChainKey, opts.toToken);
   const amount = requirePositiveNumber(opts.amount, 'amount');
   const amountSmallest = toSmallestUnit(amount, fromToken.decimals);
+
+  // Security check — pre-fetch balance for ALL_BALANCE_SWAP red line
+  let tokenBalance = 0;
+  try {
+    const bal = await walletBalance(walletId, fromChainKey);
+    tokenBalance = Number(bal.balances[fromToken.symbol] ?? '0');
+  } catch { /* best effort — skip balance check if RPC fails */ }
+
+  await securityCheck(
+    { walletId, action: 'bridge.exec', amount, token: fromToken.symbol, chain: fromChain.name },
+    { yes: opts.yes, force: opts.force, getBalance: () => tokenBalance }
+  );
 
   // Atomic: idempotency + policy + pending INSERT
   const db = getDb();

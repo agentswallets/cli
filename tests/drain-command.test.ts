@@ -72,6 +72,10 @@ vi.mock('../src/commands/tx.js', () => ({
   txSendCommand: (...args: unknown[]) => mockTxSend(...args)
 }));
 
+vi.mock('../src/security/guard.js', () => ({
+  securityCheck: vi.fn().mockResolvedValue({ warnings: [] })
+}));
+
 /** Helper: polygon balance with all 4 tokens */
 function polygonBalance(pol: string, usdc: string, usdce: string, usdt = '0') {
   return {

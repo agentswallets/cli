@@ -91,6 +91,10 @@ vi.mock('../src/core/polymarket/factory.js', () => ({
   getPolymarketAdapter: vi.fn(() => adapter)
 }));
 
+vi.mock('../src/security/guard.js', () => ({
+  securityCheck: vi.fn().mockResolvedValue({ warnings: [] })
+}));
+
 describe('predict command integration (mock adapter)', () => {
   afterEach(() => {
     vi.clearAllMocks();

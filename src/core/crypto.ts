@@ -93,6 +93,11 @@ export function decryptSecretAsBuffer(payloadRaw: string, password: string): Buf
       decipher.setAuthTag(tag);
       const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
       key.fill(0);
+      // Prevent accidental serialization of decrypted secrets
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (decrypted as any).toJSON = () => '[REDACTED]';
+      // Auto-zero after 30s to limit exposure window
+      setTimeout(() => decrypted.fill(0), 30_000).unref();
       return decrypted;
     } catch (err) {
       lastErr = err;

@@ -49,6 +49,10 @@ vi.mock('../src/core/audit-service.js', () => ({
   logAudit: (...args: unknown[]) => logAuditMock(...args)
 }));
 
+vi.mock('../src/security/guard.js', () => ({
+  securityCheck: vi.fn().mockResolvedValue({ warnings: [] })
+}));
+
 import { policySetCommand, policyShowCommand } from '../src/commands/policy.js';
 
 describe('policySetCommand', () => {
@@ -63,22 +67,22 @@ describe('policySetCommand', () => {
     getPolicyMock.mockReturnValue({ ...defaultPolicy });
   });
 
-  it('sets daily and per-tx limits', () => {
-    const result = policySetCommand('w_test', { limitDaily: '1000', limitPerTx: '200' });
+  it('sets daily and per-tx limits', async () => {
+    const result = await policySetCommand('w_test', { limitDaily: '1000', limitPerTx: '200' });
     expect(result.name).toBe('bot');
     expect(result.address).toBe('0x1234');
     expect(result.policy.daily_limit).toBe(1000);
     expect(result.policy.per_tx_limit).toBe(200);
   });
 
-  it('preserves existing values when only one limit provided', () => {
-    const result = policySetCommand('w_test', { limitDaily: '800' });
+  it('preserves existing values when only one limit provided', async () => {
+    const result = await policySetCommand('w_test', { limitDaily: '800' });
     expect(result.policy.daily_limit).toBe(800);
     expect(result.policy.per_tx_limit).toBe(100); // preserved from existing
   });
 
-  it('calls upsertPolicy with merged config', () => {
-    policySetCommand('w_test', { limitDaily: '600', limitPerTx: '150' });
+  it('calls upsertPolicy with merged config', async () => {
+    await policySetCommand('w_test', { limitDaily: '600', limitPerTx: '150' });
     expect(upsertPolicyMock).toHaveBeenCalledWith('w_test', expect.objectContaining({
       daily_limit: 600,
       per_tx_limit: 150,
@@ -87,20 +91,20 @@ describe('policySetCommand', () => {
     }));
   });
 
-  it('validates wallet exists before setting policy', () => {
-    policySetCommand('w_test', { limitDaily: '500' });
+  it('validates wallet exists before setting policy', async () => {
+    await policySetCommand('w_test', { limitDaily: '500' });
     expect(getWalletByIdMock).toHaveBeenCalledWith('w_test');
   });
 
-  it('throws on wallet not found', () => {
+  it('throws on wallet not found', async () => {
     getWalletByIdMock.mockImplementation(() => {
       throw { code: 'ERR_WALLET_NOT_FOUND', message: 'wallet_id not found' };
     });
-    expect(() => policySetCommand('w_nonexistent', { limitDaily: '500' })).toThrow();
+    await expect(policySetCommand('w_nonexistent', { limitDaily: '500' })).rejects.toThrow();
   });
 
-  it('logs audit on successful policy set', () => {
-    policySetCommand('w_test', { limitDaily: '500' });
+  it('logs audit on successful policy set', async () => {
+    await policySetCommand('w_test', { limitDaily: '500' });
     expect(logAuditMock).toHaveBeenCalledWith(
       expect.objectContaining({
         wallet_id: 'w_test',
@@ -110,9 +114,9 @@ describe('policySetCommand', () => {
     );
   });
 
-  it('rejects non-positive limit values', () => {
-    expect(() => policySetCommand('w_test', { limitDaily: '-10' })).toThrow();
-    expect(() => policySetCommand('w_test', { limitPerTx: '0' })).toThrow();
+  it('rejects non-positive limit values', async () => {
+    await expect(policySetCommand('w_test', { limitDaily: '-10' })).rejects.toThrow();
+    await expect(policySetCommand('w_test', { limitPerTx: '0' })).rejects.toThrow();
   });
 });
 

@@ -37,6 +37,7 @@ import { marketPriceCommand, marketCandlesCommand, marketTradesCommand } from '.
 import { tokenSearchCommand, tokenInfoCommand, tokenTrendingCommand, tokenHoldersCommand } from './commands/token-cmd.js';
 import { historyListCommand } from './commands/history.js';
 import { perpAssetsCommand, perpPricesCommand, perpFundingCommand, perpAccountCommand, perpPositionsCommand, perpOrdersCommand, perpOpenCommand, perpCloseCommand, perpCancelCommand } from './commands/perp.js';
+import { securityBlacklistAddCommand, securityBlacklistRemoveCommand, securityBlacklistListCommand, securityStatusCommand, securityBaselineInitCommand, securityBaselineVerifyCommand, securityReportCommand, securityAnomalyCommand } from './commands/security.js';
 
 /** Resolve wallet identifier (name, address, or UUID) from positional arg OR --wallet flag. Returns internal wallet_id. */
 function resolveWalletArg(positional: string | undefined, flag: string | undefined): string {
@@ -130,8 +131,9 @@ export function buildCli(): Command {
       .option('--wallet <wallet>', 'Wallet name or address')
       .option('--yes', 'Skip confirmation')
       .option('--danger-export', 'Confirm you want to export the private key')
+      .option('--force', 'Skip yellow-line security warnings')
       .addHelpText('after', '\nExample:\n  AW_ALLOW_EXPORT=1 aw wallet export-key alice --danger-export --yes --json\n')
-      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; dangerExport?: boolean }) => runCommand({ ...opts, skipRedact: true }, () => walletExportKeyCommand(resolveWalletArg(walletArg, opts.wallet), Boolean(opts.yes), Boolean(opts.dangerExport))))
+      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; dangerExport?: boolean; force?: boolean }) => runCommand({ ...opts, skipRedact: true }, () => walletExportKeyCommand(resolveWalletArg(walletArg, opts.wallet), Boolean(opts.yes), Boolean(opts.dangerExport), Boolean(opts.force))))
   );
   withCommon(
     wallet
@@ -141,11 +143,13 @@ export function buildCli(): Command {
       .requiredOption('--to <address>', 'Destination address')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Preview drain plan without executing transfers')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw wallet drain alice --to 0x742d... --json\n  aw wallet drain alice --to 0x742d... --dry-run --json\n  aw wallet drain --wallet alice --to 0x742d... --idempotency-key drain1 --json\n  aw wallet drain alice --to 0x742d... --chain ethereum --json\n')
-      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; to: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string }) => {
+      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; to: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string; force?: boolean }) => {
         const walletId = resolveWalletArg(walletArg, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : undefined;
-        return runCommand({ ...opts, write: !opts.dryRun }, () => walletDrainCommand(walletId, { to: opts.to, idempotencyKey: idemKey, dryRun: opts.dryRun, chain: opts.chain }));
+        return runCommand({ ...opts, write: !opts.dryRun }, () => walletDrainCommand(walletId, { to: opts.to, idempotencyKey: idemKey, dryRun: opts.dryRun, chain: opts.chain, force: opts.force, yes: opts.yes }));
       })
   );
   withCommon(wallet.command('settings [wallet]').description('Show wallet policy (alias for: aw policy show; wallet required as arg or --wallet)').option('--wallet <wallet>', 'Wallet name or address').addHelpText('after', '\nExample:\n  aw wallet settings alice --json\n').action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string }) => runCommand(opts, () => policyShowCommand(resolveWalletArg(walletArg, opts.wallet)))));
@@ -160,11 +164,13 @@ export function buildCli(): Command {
       .option('--allowed-tokens <tokens>', 'Comma-separated token list (e.g. POL,USDC)')
       .option('--allowed-addresses <addrs>', 'Comma-separated address allowlist')
       .option('--require-approval-above <n>', 'Require approval above this amount (0 to clear)')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText(
         'after',
         '\nExample:\n  aw wallet settings-set alice --limit-daily 500 --limit-per-tx 100 --json\n'
       )
-      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; limitDaily?: string; limitPerTx?: string; maxTxPerDay?: string; allowedTokens?: string; allowedAddresses?: string; requireApprovalAbove?: string }) =>
+      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; limitDaily?: string; limitPerTx?: string; maxTxPerDay?: string; allowedTokens?: string; allowedAddresses?: string; requireApprovalAbove?: string; force?: boolean }) =>
         runCommand({ ...opts, write: true }, () =>
           policySetCommand(resolveWalletArg(walletArg, opts.wallet), {
             limitDaily: opts.limitDaily,
@@ -172,7 +178,9 @@ export function buildCli(): Command {
             maxTxPerDay: opts.maxTxPerDay,
             allowedTokens: opts.allowedTokens,
             allowedAddresses: opts.allowedAddresses,
-            requireApprovalAbove: opts.requireApprovalAbove
+            requireApprovalAbove: opts.requireApprovalAbove,
+            force: opts.force,
+            yes: opts.yes
           })
         )
       )
@@ -188,11 +196,13 @@ export function buildCli(): Command {
       .requiredOption('--token <symbol>', 'Token symbol (e.g. POL, ETH, USDC, USDT)')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Validate without broadcasting')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText(
         'after',
         '\nUsage:\n  aw send --wallet alice --to <address> --amount <n> --token <symbol>\n\nExample:\n  aw send --wallet alice --to 0x742d... --amount 1 --token USDC --json\n  aw send --wallet alice --to 0x742d... --amount 1 --token USDC --idempotency-key s1 --json\n  aw send --wallet alice --to 0x742d... --amount 1 --token ETH --chain ethereum --json\n'
       )
-      .action((opts: CommonOpts & { wallet: string; to: string; amount: string; token: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string }) => {
+      .action((opts: CommonOpts & { wallet: string; to: string; amount: string; token: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string; force?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: true }, () =>
@@ -202,7 +212,9 @@ export function buildCli(): Command {
             token: opts.token,
             idempotencyKey: idemKey,
             dryRun: opts.dryRun,
-            chain: opts.chain
+            chain: opts.chain,
+            force: opts.force,
+            yes: opts.yes
           })
         );
       })
@@ -231,8 +243,10 @@ export function buildCli(): Command {
       .requiredOption('--price <n>', 'Price')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Validate without placing order')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nNote: Polymarket uses USDC.e (bridged) on Polygon, not native USDC.\n  Ensure wallet has USDC.e balance. Use `aw swap` to convert USDC → USDC.e if needed.\n  Run `aw predict approve-set` before first trade.\n\nExample:\n  aw predict buy --wallet alice --market mkt_xxx --outcome yes --size 10 --price 0.4 --json\n')
-      .action((opts: CommonOpts & { wallet: string; market: string; outcome: string; size: string; price: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
+      .action((opts: CommonOpts & { wallet: string; market: string; outcome: string; size: string; price: string; idempotencyKey?: string | boolean; dryRun?: boolean; force?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: true }, () =>
@@ -242,7 +256,9 @@ export function buildCli(): Command {
             size: opts.size,
             price: opts.price,
             idempotencyKey: idemKey,
-            dryRun: opts.dryRun
+            dryRun: opts.dryRun,
+            force: opts.force,
+            yes: opts.yes
           })
         );
       })
@@ -256,8 +272,10 @@ export function buildCli(): Command {
       .requiredOption('--size <n>', 'Size')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Validate without placing order')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nNote: Polymarket uses USDC.e (bridged) on Polygon. Run `aw predict approve-set` before first trade.\n\nExample:\n  aw predict sell --wallet alice --position pos_xxx --size 5 --json\n')
-      .action((opts: CommonOpts & { wallet: string; position: string; size: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
+      .action((opts: CommonOpts & { wallet: string; position: string; size: string; idempotencyKey?: string | boolean; dryRun?: boolean; force?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: true }, () =>
@@ -265,7 +283,9 @@ export function buildCli(): Command {
             position: opts.position,
             size: opts.size,
             idempotencyKey: idemKey,
-            dryRun: opts.dryRun
+            dryRun: opts.dryRun,
+            force: opts.force,
+            yes: opts.yes
           })
         );
       })
@@ -278,9 +298,11 @@ export function buildCli(): Command {
       .description('Cancel an open order')
       .requiredOption('--wallet <wallet>', 'Wallet name or address')
       .requiredOption('--order-id <order_id>', 'Order id to cancel')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw predict cancel --wallet alice --order-id <order_id> --json\n')
-      .action((opts: CommonOpts & { wallet: string; orderId: string }) =>
-        runCommand({ ...opts, write: true }, () => polyCancelCommand(resolveWalletArg(undefined, opts.wallet), opts.orderId))
+      .action((opts: CommonOpts & { wallet: string; orderId: string; force?: boolean; yes?: boolean }) =>
+        runCommand({ ...opts, write: true }, () => polyCancelCommand(resolveWalletArg(undefined, opts.wallet), opts.orderId, { force: opts.force, yes: opts.yes }))
       )
   );
   withCommonNoChain(
@@ -298,9 +320,11 @@ export function buildCli(): Command {
       .command('approve-set')
       .description('Execute contract approvals for USDC.e trading (required before first trade)')
       .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nApproves USDC.e and CTF token contracts for Polymarket Exchange.\nMust be run once per wallet before placing orders.\n\nExample:\n  aw predict approve-set --wallet alice --json\n')
-      .action((opts: CommonOpts & { wallet: string }) =>
-        runCommand({ ...opts, write: true }, () => polyApproveSetCommand(resolveWalletArg(undefined, opts.wallet)))
+      .action((opts: CommonOpts & { wallet: string; force?: boolean; yes?: boolean }) =>
+        runCommand({ ...opts, write: true }, () => polyApproveSetCommand(resolveWalletArg(undefined, opts.wallet), { force: opts.force, yes: opts.yes }))
       )
   );
   withCommonNoChain(
@@ -308,9 +332,11 @@ export function buildCli(): Command {
       .command('update-balance')
       .description('Refresh CLOB collateral balance cache')
       .requiredOption('--wallet <wallet>', 'Wallet name or address')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw predict update-balance --wallet alice --json\n')
-      .action((opts: CommonOpts & { wallet: string }) =>
-        runCommand(opts, () => polyUpdateBalanceCommand(resolveWalletArg(undefined, opts.wallet)))
+      .action((opts: CommonOpts & { wallet: string; force?: boolean; yes?: boolean }) =>
+        runCommand({ ...opts, write: true }, () => polyUpdateBalanceCommand(resolveWalletArg(undefined, opts.wallet), { force: opts.force, yes: opts.yes }))
       )
   );
   withCommonNoChain(
@@ -320,9 +346,11 @@ export function buildCli(): Command {
       .requiredOption('--wallet <wallet>', 'Wallet name or address')
       .requiredOption('--condition <condition_id>', 'Condition ID (0x-prefixed)')
       .requiredOption('--amount <n>', 'Amount in USDC')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw predict ctf-split --wallet alice --condition 0xabc... --amount 5 --json\n')
-      .action((opts: CommonOpts & { wallet: string; condition: string; amount: string }) =>
-        runCommand({ ...opts, write: true }, () => polyCtfSplitCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, amount: opts.amount }))
+      .action((opts: CommonOpts & { wallet: string; condition: string; amount: string; force?: boolean; yes?: boolean }) =>
+        runCommand({ ...opts, write: true }, () => polyCtfSplitCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, amount: opts.amount, force: opts.force, yes: opts.yes }))
       )
   );
   withCommonNoChain(
@@ -332,9 +360,11 @@ export function buildCli(): Command {
       .requiredOption('--wallet <wallet>', 'Wallet name or address')
       .requiredOption('--condition <condition_id>', 'Condition ID (0x-prefixed)')
       .requiredOption('--amount <n>', 'Amount in USDC')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw predict ctf-merge --wallet alice --condition 0xabc... --amount 5 --json\n')
-      .action((opts: CommonOpts & { wallet: string; condition: string; amount: string }) =>
-        runCommand({ ...opts, write: true }, () => polyCtfMergeCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, amount: opts.amount }))
+      .action((opts: CommonOpts & { wallet: string; condition: string; amount: string; force?: boolean; yes?: boolean }) =>
+        runCommand({ ...opts, write: true }, () => polyCtfMergeCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, amount: opts.amount, force: opts.force, yes: opts.yes }))
       )
   );
   withCommonNoChain(
@@ -343,9 +373,11 @@ export function buildCli(): Command {
       .description('Redeem winning tokens after market resolution')
       .requiredOption('--wallet <wallet>', 'Wallet name or address')
       .requiredOption('--condition <condition_id>', 'Condition ID (0x-prefixed)')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw predict ctf-redeem --wallet alice --condition 0xabc... --json\n')
-      .action((opts: CommonOpts & { wallet: string; condition: string }) =>
-        runCommand({ ...opts, write: true }, () => polyCtfRedeemCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition }))
+      .action((opts: CommonOpts & { wallet: string; condition: string; force?: boolean; yes?: boolean }) =>
+        runCommand({ ...opts, write: true }, () => polyCtfRedeemCommand(resolveWalletArg(undefined, opts.wallet), { condition: opts.condition, force: opts.force, yes: opts.yes }))
       )
   );
   withCommonNoChain(
@@ -371,8 +403,10 @@ export function buildCli(): Command {
       .requiredOption('--token <symbol>', 'Token symbol (e.g. POL, ETH, USDC, USDT)')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Validate without broadcasting')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw tx send --wallet alice --to 0x742d... --amount 1 --token USDC --json\n')
-      .action((opts: CommonOpts & { wallet: string; to: string; amount: string; token: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string }) => {
+      .action((opts: CommonOpts & { wallet: string; to: string; amount: string; token: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string; force?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: true }, () =>
@@ -382,7 +416,9 @@ export function buildCli(): Command {
             token: opts.token,
             idempotencyKey: idemKey,
             dryRun: opts.dryRun,
-            chain: opts.chain
+            chain: opts.chain,
+            force: opts.force,
+            yes: opts.yes
           })
         );
       })
@@ -420,15 +456,19 @@ export function buildCli(): Command {
       .option('--allowed-tokens <tokens>', 'Comma-separated token list (e.g. POL,USDC)')
       .option('--allowed-addresses <addrs>', 'Comma-separated address allowlist')
       .option('--require-approval-above <n>', 'Require approval above this amount (0 to clear)')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw policy set alice --limit-daily 500 --limit-per-tx 100 --json\n  aw policy set --wallet alice --allowed-tokens POL,USDC --max-tx-per-day 50 --json\n')
-      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; limitDaily?: string; limitPerTx?: string; maxTxPerDay?: string; allowedTokens?: string; allowedAddresses?: string; requireApprovalAbove?: string }) =>
+      .action((walletArg: string | undefined, opts: CommonOpts & { wallet?: string; limitDaily?: string; limitPerTx?: string; maxTxPerDay?: string; allowedTokens?: string; allowedAddresses?: string; requireApprovalAbove?: string; force?: boolean }) =>
         runCommand({ ...opts, write: true }, () => policySetCommand(resolveWalletArg(walletArg, opts.wallet), {
           limitDaily: opts.limitDaily,
           limitPerTx: opts.limitPerTx,
           maxTxPerDay: opts.maxTxPerDay,
           allowedTokens: opts.allowedTokens,
           allowedAddresses: opts.allowedAddresses,
-          requireApprovalAbove: opts.requireApprovalAbove
+          requireApprovalAbove: opts.requireApprovalAbove,
+          force: opts.force,
+          yes: opts.yes
         }))
       )
   );
@@ -544,8 +584,10 @@ export function buildCli(): Command {
       .option('--slippage <n>', 'Slippage tolerance (default: 0.5%)')
       .option('--idempotency-key [key]', 'Idempotency key for retry safety (auto-generated if omitted)')
       .option('--dry-run', 'Validate without executing')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw swap exec --wallet alice --from ETH --to USDC --amount 0.1 --chain ethereum --json\n')
-      .action((opts: CommonOpts & { wallet: string; from: string; to: string; amount: string; slippage?: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string }) => {
+      .action((opts: CommonOpts & { wallet: string; from: string; to: string; amount: string; slippage?: string; idempotencyKey?: string | boolean; dryRun?: boolean; chain?: string; force?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: !opts.dryRun }, () =>
@@ -557,6 +599,8 @@ export function buildCli(): Command {
             slippage: opts.slippage,
             idempotencyKey: idemKey,
             dryRun: opts.dryRun,
+            force: opts.force,
+            yes: opts.yes,
           })
         );
       })
@@ -591,8 +635,10 @@ export function buildCli(): Command {
       .requiredOption('--to-token <token>', 'To token')
       .requiredOption('--amount <n>', 'Amount')
       .option('--idempotency-key [key]', 'Idempotency key (auto-generated if omitted)')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw bridge exec --wallet alice --from-chain ethereum --to-chain polygon --from-token ETH --to-token ETH --amount 0.1 --json\n')
-      .action((opts: CommonOpts & { wallet: string; fromChain: string; toChain: string; fromToken: string; toToken: string; amount: string; idempotencyKey?: string | boolean }) => {
+      .action((opts: CommonOpts & { wallet: string; fromChain: string; toChain: string; fromToken: string; toToken: string; amount: string; idempotencyKey?: string | boolean; force?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: true }, () =>
@@ -603,6 +649,8 @@ export function buildCli(): Command {
             toToken: opts.toToken,
             amount: opts.amount,
             idempotencyKey: idemKey,
+            force: opts.force,
+            yes: opts.yes,
           })
         );
       })
@@ -748,8 +796,10 @@ export function buildCli(): Command {
       .option('--leverage <n>', 'Leverage (default: 1)')
       .option('--idempotency-key [key]', 'Idempotency key (auto-generated if omitted)')
       .option('--dry-run', 'Validate without executing')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw perp open --wallet alice --asset BTC --side long --size 0.01 --leverage 5 --json\n')
-      .action((opts: CommonOpts & { wallet: string; asset: string; side: string; size: string; leverage?: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
+      .action((opts: CommonOpts & { wallet: string; asset: string; side: string; size: string; leverage?: string; idempotencyKey?: string | boolean; dryRun?: boolean; force?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: !opts.dryRun }, () =>
@@ -760,6 +810,8 @@ export function buildCli(): Command {
             leverage: opts.leverage,
             idempotencyKey: idemKey,
             dryRun: opts.dryRun,
+            force: opts.force,
+            yes: opts.yes,
           })
         );
       })
@@ -771,8 +823,10 @@ export function buildCli(): Command {
       .option('--size <n>', 'Size to close (default: full position)')
       .option('--idempotency-key [key]', 'Idempotency key (auto-generated if omitted)')
       .option('--dry-run', 'Validate without executing')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw perp close --wallet alice --asset BTC --json\n  aw perp close --wallet alice --asset BTC --size 0.005 --json\n')
-      .action((opts: CommonOpts & { wallet: string; asset: string; size?: string; idempotencyKey?: string | boolean; dryRun?: boolean }) => {
+      .action((opts: CommonOpts & { wallet: string; asset: string; size?: string; idempotencyKey?: string | boolean; dryRun?: boolean; force?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: !opts.dryRun }, () =>
@@ -781,6 +835,8 @@ export function buildCli(): Command {
             size: opts.size,
             idempotencyKey: idemKey,
             dryRun: opts.dryRun,
+            force: opts.force,
+            yes: opts.yes,
           })
         );
       })
@@ -791,8 +847,10 @@ export function buildCli(): Command {
       .requiredOption('--asset <asset>', 'Asset symbol')
       .requiredOption('--order-id <oid>', 'Order ID to cancel')
       .option('--idempotency-key [key]', 'Idempotency key (auto-generated if omitted)')
+      .option('--force', 'Skip yellow-line security warnings')
+      .option('--yes', 'Auto-confirm red-line security prompts')
       .addHelpText('after', '\nExample:\n  aw perp cancel --wallet alice --asset BTC --order-id 12345 --json\n')
-      .action((opts: CommonOpts & { wallet: string; asset: string; orderId: string; idempotencyKey?: string | boolean }) => {
+      .action((opts: CommonOpts & { wallet: string; asset: string; orderId: string; idempotencyKey?: string | boolean; force?: boolean; yes?: boolean }) => {
         const walletId = resolveWalletArg(undefined, opts.wallet);
         const idemKey = typeof opts.idempotencyKey === 'string' ? opts.idempotencyKey : crypto.randomUUID();
         return runCommand({ ...opts, write: true }, () =>
@@ -800,9 +858,79 @@ export function buildCli(): Command {
             asset: opts.asset,
             orderId: opts.orderId,
             idempotencyKey: idemKey,
+            force: opts.force,
+            yes: opts.yes,
           })
         );
       })
+  );
+
+  // ── Security commands ──
+  const security = program.command('security').description('Security operations');
+
+  withCommon(
+    security.command('status').description('Show security status')
+      .addHelpText('after', '\nExample:\n  aw security status --json\n')
+      .action((opts: CommonOpts) => runCommand(opts, () => securityStatusCommand()))
+  );
+
+  const blacklist = security.command('blacklist').description('Manage address blacklist');
+
+  withCommon(
+    blacklist.command('add').description('Add address to blacklist')
+      .requiredOption('--address <address>', 'Address to blacklist')
+      .option('--reason <reason>', 'Reason for blacklisting')
+      .addHelpText('after', '\nExample:\n  aw security blacklist add --address 0xdead... --reason "known scam" --json\n  aw security blacklist add --address 0xdead... --chain polygon --json\n')
+      .action((opts: CommonOpts & { address: string; chain?: string; reason?: string }) =>
+        runCommand({ ...opts, write: true }, () => securityBlacklistAddCommand(opts.address, { chain: opts.chain, reason: opts.reason }))
+      )
+  );
+
+  withCommon(
+    blacklist.command('remove').description('Remove address from blacklist')
+      .requiredOption('--address <address>', 'Address to remove')
+      .addHelpText('after', '\nExample:\n  aw security blacklist remove --address 0xdead... --json\n')
+      .action((opts: CommonOpts & { address: string }) =>
+        runCommand({ ...opts, write: true }, () => securityBlacklistRemoveCommand(opts.address))
+      )
+  );
+
+  withCommon(
+    blacklist.command('list').description('List blacklisted addresses')
+      .addHelpText('after', '\nExample:\n  aw security blacklist list --json\n')
+      .action((opts: CommonOpts) => runCommand(opts, () => securityBlacklistListCommand()))
+  );
+
+  // ── Baseline ──
+  const baseline = security.command('baseline').description('Config baseline verification');
+
+  withCommon(
+    baseline.command('init').description('Initialize config baseline hashes')
+      .action((opts: CommonOpts) => runCommand({ ...opts, write: true }, () => securityBaselineInitCommand()))
+  );
+
+  withCommon(
+    baseline.command('verify').description('Verify config baseline hashes')
+      .action((opts: CommonOpts) => runCommand(opts, () => securityBaselineVerifyCommand()))
+  );
+
+  // ── Report ──
+  withCommon(
+    security.command('report').description('Generate security report')
+      .option('--wallet <id>', 'Filter by wallet ID')
+      .option('--days <n>', 'Number of days to cover (default: 7)')
+      .action((opts: CommonOpts & { wallet?: string; days?: string }) =>
+        runCommand(opts, () => securityReportCommand({ wallet: opts.wallet, days: opts.days }))
+      )
+  );
+
+  // ── Anomaly ──
+  withCommon(
+    security.command('anomaly <wallet>').description('Detect anomalies for a wallet')
+      .option('--days <n>', 'Number of days to cover (default: 7)')
+      .action((wallet: string, opts: CommonOpts & { days?: string }) =>
+        runCommand(opts, () => securityAnomalyCommand(wallet, { days: opts.days }))
+      )
   );
 
   return program;

@@ -113,6 +113,10 @@ vi.mock('../src/core/audit-service.js', () => ({
   logAudit: vi.fn()
 }));
 
+vi.mock('../src/security/guard.js', () => ({
+  securityCheck: vi.fn().mockResolvedValue({ warnings: [] })
+}));
+
 // Mock executeSend to avoid real RPC calls — it's called after the atomic block
 vi.mock('../src/core/tx-service.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../src/core/tx-service.js')>();

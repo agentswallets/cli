@@ -15,6 +15,7 @@ import { getAccountSummary, getOpenOrders, getUserFills } from '../core/hyperliq
 import { openPosition, closePosition, cancelOrder } from '../core/hyperliquid/trading.js';
 import { createExchangeClient } from '../core/hyperliquid/client.js';
 import { ensureBuilderFeeApproved } from '../core/hyperliquid/builder-fee.js';
+import { securityCheck } from '../security/guard.js';
 
 // ── Read-only commands ──
 
@@ -114,6 +115,8 @@ export async function perpOpenCommand(
     leverage?: string;
     idempotencyKey: string;
     dryRun?: boolean;
+    force?: boolean;
+    yes?: boolean;
   }
 ): Promise<{
   tx_id: string;
@@ -150,6 +153,14 @@ export async function perpOpenCommand(
     throw new AppError('ERR_HL_INVALID_ASSET', `No price found for asset: ${opts.asset}`);
   }
   const notional = size * parseFloat(currentPrice);
+
+  // Security check (skip in dry-run)
+  if (!opts.dryRun) {
+    await securityCheck(
+      { walletId, action: 'perp.open', amount: notional, leverage },
+      { yes: opts.yes, force: opts.force }
+    );
+  }
 
   if (opts.dryRun) {
     return {
@@ -286,6 +297,8 @@ export async function perpCloseCommand(
     size?: string;
     idempotencyKey: string;
     dryRun?: boolean;
+    force?: boolean;
+    yes?: boolean;
   }
 ): Promise<{
   tx_id: string;
@@ -323,6 +336,14 @@ export async function perpCloseCommand(
   const currentPrice = prices[coinUpper];
   if (!currentPrice) {
     throw new AppError('ERR_HL_INVALID_ASSET', `No price found for asset: ${opts.asset}`);
+  }
+
+  // Security check (skip in dry-run)
+  if (!opts.dryRun) {
+    await securityCheck(
+      { walletId, action: 'perp.close' },
+      { yes: opts.yes, force: opts.force }
+    );
   }
 
   if (opts.dryRun) {
@@ -450,6 +471,8 @@ export async function perpCancelCommand(
     asset: string;
     orderId: string;
     idempotencyKey: string;
+    force?: boolean;
+    yes?: boolean;
   }
 ): Promise<{ tx_id: string; status: string; asset: string; orderId: number }> {
   assertInitialized();
@@ -461,6 +484,12 @@ export async function perpCancelCommand(
   if (isNaN(oid)) throw new AppError('ERR_INVALID_PARAMS', 'order-id must be a number');
 
   const assetIndex = await resolveAssetIndex(opts.asset);
+
+  // Security check
+  await securityCheck(
+    { walletId, action: 'perp.cancel' },
+    { yes: opts.yes, force: opts.force }
+  );
 
   const db = getDb();
   const atomicResult = db.transaction(() => {

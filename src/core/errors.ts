@@ -58,7 +58,12 @@ const RECOVERY_HINTS: Partial<Record<AppErrorCode, string>> = {
   ERR_HL_ORDER_FAILED: 'Hyperliquid order failed. Check asset, size, and margin.',
   ERR_HL_INVALID_ASSET: 'Unknown Hyperliquid asset. Use `aw perp assets` to see available assets.',
   ERR_HL_INSUFFICIENT_MARGIN: 'Insufficient margin. Deposit more USDC to Hyperliquid or reduce position size.',
-  ERR_HL_BUILDER_FEE_FAILED: 'Failed to approve builder fee. Try again.'
+  ERR_HL_BUILDER_FEE_FAILED: 'Failed to approve builder fee. Try again.',
+  ERR_RED_LINE_BLOCKED: 'Add --yes to confirm, or review with --dry-run first.',
+  ERR_RATE_LIMITED: 'Wait before sending more transactions.',
+  ERR_BLACKLISTED_ADDRESS: 'Address is on security blacklist. Remove with `aw security blacklist remove <addr>`.',
+  ERR_BASELINE_TAMPERED: 'Config files modified. Run `aw security baseline verify` for details.',
+  ERR_PREFLIGHT_FAILED: 'Pre-flight check failed. Use --dry-run to see details.'
 };
 
 export function recoveryHintForCode(code: AppErrorCode): string | undefined {

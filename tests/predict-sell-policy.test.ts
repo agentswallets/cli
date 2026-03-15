@@ -71,6 +71,10 @@ vi.mock('../src/core/policy-engine.js', () => ({
   }))
 }));
 
+vi.mock('../src/security/guard.js', () => ({
+  securityCheck: vi.fn().mockResolvedValue({ warnings: [] })
+}));
+
 describe('predict sell policy guard', () => {
   it('rejects sell when policy denies', async () => {
     const { polySellCommand } = await import('../src/commands/poly.js');

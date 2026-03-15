@@ -37,6 +37,10 @@ vi.mock('../src/util/agent-input.js', () => ({
   getMasterPassword: vi.fn(async () => 'password123')
 }));
 
+vi.mock('../src/security/guard.js', () => ({
+  securityCheck: vi.fn().mockResolvedValue({ warnings: [] })
+}));
+
 import { walletExportKeyCommand } from '../src/commands/wallet.js';
 
 describe('wallet export-key guard', () => {

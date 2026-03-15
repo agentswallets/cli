@@ -7,6 +7,7 @@ import { getProvider, mapRpcError, verifyChainId } from './rpc.js';
 import { getWalletById } from './wallet-store.js';
 import { decryptSecretAsBuffer } from './crypto.js';
 import { safeSummary } from '../util/redact.js';
+import { validateSigningIntent } from '../security/signing-validator.js';
 import type { OperationRow, PublicOperationRow } from './types.js';
 import { getEvmAdapter } from './evm-adapter.js';
 import { getSolanaAdapter } from './solana-adapter.js';
@@ -153,7 +154,14 @@ export async function executeSend(input: {
       return { tx_id: txId, tx_hash: result.txHash, status: result.status, token: input.token, amount: input.amount, to: input.to, chain: chain.name, explorer_url: `${chain.explorerTxUrl}${result.txHash}` };
     }
 
-    // EVM path
+    // EVM path — validate signing intent before decrypting keys
+    validateSigningIntent({
+      userTo: input.to,
+      userChainId: chain.chainId,
+      txTo: input.to,
+      txChainId: chain.chainId,
+    });
+
     pkBuf = decryptSecretAsBuffer(walletRow.encrypted_private_key, input.password);
     const adapter = getEvmAdapter(chainKey);
     const result = await adapter.send({
